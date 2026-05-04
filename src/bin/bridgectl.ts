@@ -1329,6 +1329,7 @@ async function commandStatus(): Promise<void> {
   const recentCall = summarizeRecentCall(state.getRecentCallSummary(), config.repoRoot);
   const daemonStartedAt = pid ? await processStartedAt(pid) : null;
   const recentFailedTask = summarizeRecentFailedTask(state.getMostRecentFailedTaskSince(daemonStartedAt));
+  const artifactFailures = state.getArtifactDeliveryFailureSummary();
   const callSurface = await syncManagedTunnelState();
   const realtimeBudget = currentRealtimeBudget();
   const activeCallLabel = activeCallStatusLabel(activeCall);
@@ -1416,6 +1417,9 @@ async function commandStatus(): Promise<void> {
     `recentFailedTask=${recentFailedTask.label}`,
     `recentFailedTaskAt=${recentFailedTask.updatedAt}`,
     `recentFailedTaskError=${recentFailedTask.error}`,
+    `artifactDeliveryFailed=${artifactFailures.failed}`,
+    `artifactDeliveryRetryable=${artifactFailures.retryable}`,
+    `artifactDeliveryQuarantined=${artifactFailures.quarantined}`,
     `recentCall=${recentCall.label}`,
     `recentCallEndedAt=${recentCall.endedAt}`,
     `recentCallTranscript=${recentCall.transcript}`,

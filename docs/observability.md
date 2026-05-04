@@ -33,9 +33,12 @@ Default logs are redacted. They should expose state transitions, ids, counts, ag
 - bridge mode, owner, and bound thread
 - active task id, stage, age, thread, and turn
 - current `/call` blocker
+- artifact delivery failure counts, including retryable and quarantined uploads
 - last public Mini App probe detail and timestamp
 - most recent failed task summary and error text
 - most recent call summary, bundle path, and handoff append state
+
+Generated artifacts that fail delivery repeatedly are quarantined after several failed attempts. Quarantined artifacts stay in local state for inspection, but they are not retried automatically on every later reply.
 
 `npm run bridge:ctl -- call status` includes:
 

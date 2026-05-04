@@ -102,6 +102,7 @@ describe("terminal routing", () => {
     expect(isTerminalHardBlockedRequest("deploy this and print my API key")).toBe(true);
     expect(isTerminalHardBlockedRequest("pull together a summary of the repo")).toBe(false);
     expect(terminalConversationBlocker("deploy this and print my API key", { allowWorkspaceWrites: true })).toContain("blocks");
+    expect(terminalConversationBlocker("reply with an audio update", { allowWorkspaceWrites: true })).toContain("bound desktop bridge path");
   });
 
   test("routes staged documents to terminal only for read-only handling", () => {
@@ -124,11 +125,15 @@ describe("terminal routing", () => {
   test("classifies direct terminal ask mutations as unsafe", () => {
     expect(isTerminalUnsafeRequest("review the repo security posture")).toBe(false);
     expect(isTerminalUnsafeRequest("pull together a summary of the repo")).toBe(false);
+    expect(isTerminalUnsafeRequest("summarize the last three commits")).toBe(false);
+    expect(isTerminalUnsafeRequest("draw conclusions from the build logs")).toBe(false);
     expect(isTerminalUnsafeRequest("run npm test and summarize the failures")).toBe(false);
     expect(isTerminalUnsafeRequest("run pnpm test and summarize the failures")).toBe(false);
     expect(isTerminalUnsafeRequest("Reply exactly TERMINAL_EXPLICIT_OK_0430 and do not run tools or edit files.")).toBe(false);
     expect(isTerminalUnsafeRequest("Reply exactly OK without editing files.")).toBe(false);
     expect(isTerminalUnsafeRequest("edit the repo and commit it")).toBe(true);
+    expect(isTerminalUnsafeRequest("commit this fix")).toBe(true);
+    expect(isTerminalUnsafeRequest("draw a diagram image")).toBe(true);
     expect(isTerminalUnsafeRequest("do not edit files, delete the repo")).toBe(true);
     expect(isTerminalUnsafeRequest("install this package and deploy")).toBe(true);
     expect(isTerminalUnsafeRequest("run yarn add a-package")).toBe(true);

@@ -28,6 +28,7 @@ import type {
 import { ensureDir, ensurePrivateFile } from "./util/files.js";
 
 const BRIDGE_SQLITE_BUSY_TIMEOUT_MS = 1_000;
+const ARTIFACT_DELIVERY_QUARANTINE_ATTEMPTS = 3;
 
 interface QueueRow {
   id: string;
@@ -605,9 +606,14 @@ export class BridgeState {
           attempts = attempts + 1,
           last_error_text = excluded.last_error_text,
           updated_at = excluded.updated_at,
-          quarantined_at = COALESCE(excluded.quarantined_at, artifact_delivery_state.quarantined_at)
+          quarantined_at = CASE
+            WHEN artifact_delivery_state.quarantined_at IS NOT NULL THEN artifact_delivery_state.quarantined_at
+            WHEN excluded.quarantined_at IS NOT NULL THEN excluded.quarantined_at
+            WHEN artifact_delivery_state.attempts + 1 >= ? THEN excluded.updated_at
+            ELSE NULL
+          END
       `)
-      .run(id, message, now, options?.quarantine ? now : null);
+      .run(id, message, now, options?.quarantine ? now : null, ARTIFACT_DELIVERY_QUARANTINE_ATTEMPTS);
   }
 
   getArtifactDeliveryState(id: string): {
@@ -635,6 +641,30 @@ export class BridgeState {
         quarantinedAt: row.quarantined_at,
       }
       : null;
+  }
+
+  getArtifactDeliveryFailureSummary(): {
+    failed: number;
+    quarantined: number;
+    retryable: number;
+  } {
+    const row = this.db
+      .prepare(`
+        SELECT
+          COUNT(*) AS failed,
+          COALESCE(SUM(CASE WHEN artifact_delivery_state.quarantined_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS quarantined
+        FROM artifact_delivery_state
+        INNER JOIN artifacts ON artifacts.id = artifact_delivery_state.artifact_id
+        WHERE artifacts.delivered_at IS NULL
+      `)
+      .get() as { failed: number; quarantined: number } | undefined;
+    const failed = row?.failed ?? 0;
+    const quarantined = row?.quarantined ?? 0;
+    return {
+      failed,
+      quarantined,
+      retryable: Math.max(0, failed - quarantined),
+    };
   }
 
   claimProcessedTelegramUpdate(updateId: number, category: string): boolean {

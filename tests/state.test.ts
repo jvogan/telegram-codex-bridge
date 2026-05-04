@@ -137,11 +137,68 @@ describe("BridgeState", () => {
       attempts: 1,
       lastErrorText: "upload blocked",
     });
+    expect(state.getArtifactDeliveryFailureSummary()).toEqual({
+      failed: 1,
+      quarantined: 1,
+      retryable: 0,
+    });
     expect(state.listRecentUndeliveredArtifacts("image", 0)).toEqual([]);
 
     state.markArtifactDelivered("artifact-failed");
 
     expect(state.getArtifactDeliveryState("artifact-failed")).toBeNull();
+    expect(state.getArtifactDeliveryFailureSummary()).toEqual({
+      failed: 0,
+      quarantined: 0,
+      retryable: 0,
+    });
+  });
+
+  test("automatically quarantines artifacts after repeated delivery failures", () => {
+    const state = createState();
+    const imagePath = join(tempRoots[tempRoots.length - 1]!, "always-fails.png");
+    writeFileSync(imagePath, "png");
+    const artifact: StoredArtifact = {
+      id: "artifact-retry",
+      modality: "image",
+      providerId: "google",
+      source: "mcp",
+      path: imagePath,
+      mimeType: "image/png",
+      fileName: "always-fails.png",
+      createdAt: Date.now(),
+      metadata: { prompt: "example" },
+      deliveredAt: null,
+    };
+
+    state.saveArtifact(artifact);
+    state.recordArtifactDeliveryFailure(artifact.id, new Error("first"));
+    state.recordArtifactDeliveryFailure(artifact.id, new Error("second"));
+
+    expect(state.getArtifactDeliveryState(artifact.id)).toMatchObject({
+      attempts: 2,
+      quarantinedAt: null,
+    });
+    expect(state.getArtifactDeliveryFailureSummary()).toEqual({
+      failed: 1,
+      quarantined: 0,
+      retryable: 1,
+    });
+    expect(state.listRecentUndeliveredArtifacts("image", 0).map(entry => entry.id)).toEqual([artifact.id]);
+
+    state.recordArtifactDeliveryFailure(artifact.id, new Error("third"));
+
+    expect(state.getArtifactDeliveryState(artifact.id)).toMatchObject({
+      attempts: 3,
+      lastErrorText: "third",
+      quarantinedAt: expect.any(Number),
+    });
+    expect(state.getArtifactDeliveryFailureSummary()).toEqual({
+      failed: 1,
+      quarantined: 1,
+      retryable: 0,
+    });
+    expect(state.listRecentUndeliveredArtifacts("image", 0)).toEqual([]);
   });
 
   test("prunes missing artifact rows instead of returning stale undelivered artifacts", () => {

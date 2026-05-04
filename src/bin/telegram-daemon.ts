@@ -4714,6 +4714,7 @@ async function sendStatus(chatId: string): Promise<void> {
     pendingUserInputRequests.size,
     state.getPendingUserInputDiagnosticCount(),
   );
+  const artifactFailures = state.getArtifactDeliveryFailureSummary();
   const publicSurface = await probeRealtimePublicSurface(config, surface, publicSurfaceProbeOptions());
   const gatewayReady = await isRealtimeGatewayReady();
   const gatewayConnected = gatewayClient.isConnected();
@@ -4760,6 +4761,7 @@ async function sendStatus(chatId: string): Promise<void> {
     `Active task: ${status.activeTask ? `${status.activeTask.queueId} (${status.activeTask.stage})` : "none"}`,
     `Active task age: ${activeTaskRecord ? formatAgeSeconds(activeTaskRecord.startedAt) : "none"}`,
     `Recent failed task: ${recentFailedTask.label}`,
+    `Artifact delivery failures: ${artifactFailures.failed} failed, ${artifactFailures.retryable} retryable, ${artifactFailures.quarantined} quarantined`,
     `Pending approvals: ${status.pendingApprovals}`,
     `Pending user input: ${pendingUserInputCount}`,
     `Active call: ${activeCall ? `${activeCall.callId} (${activeCall.status})` : "none"}`,

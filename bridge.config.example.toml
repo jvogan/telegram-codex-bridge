@@ -1,0 +1,146 @@
+[telegram]
+# Get this by sending /start to the bot from Telegram, then running:
+# npm run telegram:discover
+authorized_chat_id = "123456789"
+transport = "long-polling"
+poll_timeout_seconds = 30
+long_poll_limit = 25
+clear_webhook_on_start = false
+
+[bridge]
+# shared-thread-resume = Telegram resumes a bound desktop Codex thread.
+# autonomous-thread = Telegram talks to a bridge-owned Codex thread.
+# shadow-window = experimental, macOS-only desktop window injection.
+# Start with shared-thread-resume if you want Telegram to inherit your current Codex Desktop session.
+mode = "shared-thread-resume"
+# Optional override. Leave this blank first.
+# Resolution order is:
+# 1. bridge.codex_binary
+# 2. CODEX_BINARY
+# 3. codex on PATH
+# 4. known platform-specific defaults such as the macOS Codex app bundle
+codex_binary = ""
+
+[terminal_lane]
+# Experimental side lane. Disabled by default.
+# When enabled, bridge:capabilities reports the gates and bridgectl or /terminal
+# can create a bridge-owned tmux session running Codex. Install tmux before
+# enabling this. The public-safe profile starts read-only with never approvals.
+# More powerful modes are available only after explicitly changing the gates below.
+enabled = false
+backend = "tmux" # tmux | iterm2 | terminal-app | auto
+session_name = "telegram-codex-bridge-terminal"
+# Optional. Defaults to codex.workdir, then the repo root.
+workdir = ""
+# Optional. Leave blank to use bridge.codex_binary, CODEX_BINARY, codex on PATH,
+# or the known Codex Desktop app bundle path.
+codex_command = ""
+profile = "public-safe" # public-safe | power-user
+sandbox = "read-only" # read-only | workspace-write
+approval_policy = "never" # never | on-request
+model = "gpt-5.5"
+reasoning_effort = "low" # low | medium | high | xhigh
+codex_profile = ""
+# true means bridge-owned tmux only; false means use terminal lock with user-owned sessions.
+daemon_owned = true
+# User-owned iTerm2/Terminal.app/existing tmux panes are off unless explicitly enabled.
+allow_user_owned_sessions = false
+# Enables terminal interrupt/clear controls after the lane is locked.
+allow_terminal_control = false
+
+[codex]
+# Point this at the repo or workspace you want Telegram and Codex to work in.
+workdir = ""
+approval_policy = "on-request"
+sandbox = "workspace-write"
+app_server_port = 8765
+# Applies when the bridge starts or resumes its own autonomous thread.
+# In shared-thread-resume mode, Telegram follows the bound desktop thread model instead.
+model = ""
+
+[storage]
+root = "./.bridge-data"
+# Cleanup window for stale media and call artifacts. Set to 0 to disable automatic cleanup.
+retention_days = 14
+
+[branding]
+product_name = "Telegram Codex Bridge"
+bot_name = "BridgeBot"
+bot_description = "Codex-powered Telegram engineering bot."
+bot_short_description = "Codex engineering bot with text, file, image, and voice support."
+realtime_badge = "Bridge Realtime"
+realtime_call_title = "Bridge Call"
+realtime_speaker_name = "Bridge"
+desktop_notification_title = "Bridge"
+invite_ready_text = "Bridge is ready to talk live."
+
+[presentation]
+# Optional: show short local filenames instead of absolute paths in readable call handoffs.
+# JSON artifacts remain complete for local automation.
+demo_practice_mode = false
+
+[providers.defaults]
+asr = "openai"
+tts = "openai"
+image_generation = "openai"
+
+[providers.fallbacks]
+asr = ["openai"]
+tts = ["elevenlabs"]
+image_generation = ["google"]
+
+[providers.openai]
+enabled = true
+asr_model = "gpt-4o-transcribe"
+tts_model = "gpt-4o-mini-tts"
+tts_voice = "marin"
+tts_response_format = "wav"
+image_model = "gpt-image-1"
+image_size = "1024x1024"
+
+[providers.elevenlabs]
+enabled = true
+tts_model = "eleven_multilingual_v2"
+tts_voice_id = ""
+tts_output_format = "mp3_44100_128"
+
+[providers.google]
+enabled = true
+image_model = "imagen-4.0-generate-001"
+image_aspect_ratio = "1:1"
+
+[experimental]
+enable_shadow_window = false
+
+[realtime]
+# Leave this disabled until the base bridge is working and bridge:capabilities looks healthy.
+enabled = false
+bridge_id = "bridge"
+# Live calling is manually armed. Keep this empty when using managed quick tunnels.
+public_url = ""
+control_url = ""
+surface_mode = "manual-arm"
+# Use "managed-quick-cloudflared" for the easiest first setup.
+# Use "static-public-url" only when you already operate a stable externally reachable origin.
+tunnel_mode = "managed-quick-cloudflared"
+# Install cloudflared first if you use managed quick tunnels.
+tunnel_bin = "cloudflared"
+gateway_host = "127.0.0.1"
+gateway_port = 8890
+model = "gpt-realtime"
+transcription_model = "gpt-4o-mini-transcribe"
+voice = "marin"
+startup_timeout_ms = 45000
+idle_warning_ms = 120000
+idle_timeout_ms = 600000
+auto_disarm_idle_ms = 300000
+launch_token_ttl_ms = 600000
+bootstrap_rate_limit_window_ms = 600000
+bootstrap_rate_limit_per_ip = 5
+bootstrap_rate_limit_per_bridge = 10
+bootstrap_rate_limit_per_user = 3
+# Hard ceiling for one live Realtime call. Default is 10 minutes.
+max_call_ms = 600000
+# Daily hard ceiling across all live calls. Default is 30 minutes total.
+max_daily_call_ms = 1800000
+summary_model = "gpt-4.1-mini"

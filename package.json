@@ -1,0 +1,98 @@
+{
+  "name": "telegram-codex-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first bridge that connects an OpenAI Codex Desktop session to a Telegram bot. Talk to your bound coding agent from anywhere with text, files, voice notes, generated artifacts, and optional OpenAI Realtime Mini App calls.",
+  "homepage": "https://github.com/jvogan/telegram-codex-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jvogan/telegram-codex-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jvogan/telegram-codex-bridge/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "telegram",
+    "telegram-bot",
+    "telegram-mini-app",
+    "codex",
+    "codex-desktop",
+    "openai-codex",
+    "ai-coding-assistant",
+    "coding-agent",
+    "agentic-coding",
+    "remote-coding",
+    "mobile-coding",
+    "openai",
+    "openai-realtime",
+    "realtime-api",
+    "model-context-protocol",
+    "mcp",
+    "voice-agent",
+    "speech-to-text",
+    "text-to-speech",
+    "image-generation",
+    "elevenlabs",
+    "google-genai",
+    "typescript",
+    "nodejs",
+    "node22",
+    "local-first",
+    "developer-tools",
+    "bridge",
+    "long-polling"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "dev:bridge": "tsx watch src/bin/bridgectl.ts",
+    "dev:telegram": "tsx watch src/bin/telegram-daemon.ts",
+    "dev:mcp": "tsx watch src/bin/media-mcp.ts",
+    "dev:gateway": "tsx watch src/bin/realtime-gateway.ts",
+    "ensure-built": "node scripts/ensure-built.mjs",
+    "bridge:ctl": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js \"$@\"' --",
+    "bridge:capabilities": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js capabilities \"$@\"' --",
+    "bridge:connect": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js connect \"$@\"' --",
+    "bridge:watch": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js watch \"$@\"' --",
+    "telegram:activate": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js connect \"$@\"' --",
+    "bridge:claim": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js claim-current \"$@\"' --",
+    "telegram:configure": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/telegram-configure.js \"$@\"' --",
+    "telegram:discover": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/telegram-discover.js \"$@\"' --",
+    "smoke:local": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node scripts/local-smoke.mjs \"$@\"' --",
+    "start:bridge": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/bridgectl.js start'",
+    "start:telegram": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/telegram-daemon.js'",
+    "start:mcp": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/media-mcp.js'",
+    "start:gateway": "sh -c 'node scripts/ensure-built.mjs --quiet; exec node dist/bin/realtime-gateway.js'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean:local-state": "node scripts/clean-local-state.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "check:public": "node scripts/check-public.mjs",
+    "check:security": "node scripts/check-security.mjs",
+    "check": "npm run build && npm run typecheck && npm run test && npm run check:docs && npm run check:security"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.38.0",
+    "@google/genai": "^1.50.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.4.7",
+    "openai": "^6.2.0",
+    "smol-toml": "^1.3.4",
+    "ws": "^8.18.3",
+    "zod": "^4.1.12"
+  },
+  "overrides": {
+    "hono": "4.12.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.3"
+  }
+}

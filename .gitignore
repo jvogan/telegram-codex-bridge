@@ -1,0 +1,11 @@
+node_modules
+dist
+.bridge-data
+.env
+.env.local
+bridge.config.toml
+coverage
+output
+tmp
+*.log
+.DS_Store

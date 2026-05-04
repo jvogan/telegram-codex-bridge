@@ -1,0 +1,4 @@
+# Fallback reviewer for every path. Add more specific rules above this line
+# as additional maintainers join, then enable CODEOWNERS review enforcement
+# in GitHub branch protection.
+* @jvogan

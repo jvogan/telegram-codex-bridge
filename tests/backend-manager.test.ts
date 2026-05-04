@@ -370,4 +370,65 @@ describe("BridgeBackendManager", () => {
       detail: "1",
     });
   });
+
+  test("configures primary and fallback managers with distinct app-server ports and autonomous thread keys", async () => {
+    const { config, state } = createStateAndConfig();
+    config.codex.app_server_port = 9101;
+    config.bridge.fallback_lane = {
+      enabled: true,
+      routing: "when_desktop_busy_safe",
+      allow_workspace_writes: false,
+      app_server_port: 9102,
+      workdir: join(config.repoRoot, "fallback-workdir"),
+    };
+    const seen: Array<{ name: string; appServerPort: number; threadKey: string; workdir: string; sandbox: string }> = [];
+
+    const primary = new BridgeBackendManager(config, state, createLogger(), {
+      lane: "primary",
+      createBackend(mode, _boundThread, options) {
+        seen.push({
+          name: "primary",
+          appServerPort: options.appServerPort,
+          threadKey: options.autonomousThreadStateKey,
+          workdir: options.workdir,
+          sandbox: options.sandbox,
+        });
+        return new FakeBackend(mode, "primary-backend", []);
+      },
+    });
+    const fallback = new BridgeBackendManager(config, state, createLogger(), {
+      lane: "fallback",
+      forcedMode: "autonomous-thread",
+      createBackend(mode, _boundThread, options) {
+        seen.push({
+          name: "fallback",
+          appServerPort: options.appServerPort,
+          threadKey: options.autonomousThreadStateKey,
+          workdir: options.workdir,
+          sandbox: options.sandbox,
+        });
+        return new FakeBackend(mode, "fallback-backend", []);
+      },
+    });
+
+    await primary.start();
+    await fallback.start();
+
+    expect(seen).toEqual([
+      {
+        name: "primary",
+        appServerPort: 9101,
+        threadKey: "codex:thread_id",
+        workdir: config.codex.workdir,
+        sandbox: "workspace-write",
+      },
+      {
+        name: "fallback",
+        appServerPort: 9102,
+        threadKey: "codex:fallback_thread_id",
+        workdir: join(config.repoRoot, "fallback-workdir"),
+        sandbox: "read-only",
+      },
+    ]);
+  });
 });

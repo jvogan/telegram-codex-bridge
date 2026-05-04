@@ -28,6 +28,7 @@ These are useful, but not required for the base bridge.
 | Voice/audio understanding | `OPENAI_API_KEY` with the configured ASR provider enabled | Without ASR, Telegram voice notes can still be staged, but transcription is unavailable. |
 | Spoken replies | `OPENAI_API_KEY` or `ELEVENLABS_API_KEY`, depending on provider config | `/speak` is a shortcut; natural language requests for audio replies are also supported. |
 | Image generation | `OPENAI_API_KEY` or `GOOGLE_GENAI_API_KEY`, depending on provider config | `/image` is a shortcut; natural language image requests use the bridge image provider by default. Set `TELEGRAM_IMAGE_GENERATION_MODE=codex-native` to prefer native Codex image generation for natural requests. |
+| Safe fallback Codex lane | `[bridge.fallback_lane]` enabled or `/fallback enable` after base setup | Optional safe extra capacity for non-mutating tasks while the bound desktop turn is busy. Workspace writes are disabled by default. |
 | Live `/call` | `OPENAI_API_KEY`, `REALTIME_CONTROL_SECRET`, realtime config, gateway, and a reachable Mini App origin | Experimental. Use only after the base bridge is working. |
 
 ## Experimental Local Operator Surfaces
@@ -48,7 +49,7 @@ These are opt-in and should be described conservatively.
 - no native Telegram voice call
 - no silent Telegram-to-terminal chat route; `/terminal chat on` is explicit and still routes native media/web/call/desktop requests to the primary bridge
 - no automatic iTerm2, Terminal.app, or existing tmux adoption
-- no safe parallel worker for arbitrary repo/file edits on the same bound thread
+- no safe parallel worker for arbitrary repo/file edits on the same bound thread; the fallback lane is for safe non-mutating work only
 - no `danger-full-access` terminal lane guidance
 - no encrypted local storage at rest
 - no npm package release yet

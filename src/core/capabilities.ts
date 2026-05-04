@@ -161,6 +161,16 @@ function telegramTerminalLaneDetail(config: BridgeConfig): string {
   return "configured for explicit /terminal use with terminal gates enabled";
 }
 
+function fallbackLaneDetail(config: BridgeConfig): string {
+  const fallback = config.bridge.fallback_lane;
+  if (!fallback?.enabled) {
+    return "disabled; use /fallback enable or [bridge.fallback_lane] after base setup if you want safe desktop-busy capacity";
+  }
+  return fallback.allow_workspace_writes
+    ? "enabled with workspace writes allowed by config; use only after an explicit operator tradeoff"
+    : "enabled for safe non-mutating work while the bound desktop turn is busy";
+}
+
 function operatorTerminalLaneLines(config: BridgeConfig, state: BridgeState): string[] {
   const lane = config.terminal_lane;
   const override = getTerminalBackendOverride(state);
@@ -221,6 +231,7 @@ export function renderCapabilityLines(
       ttsAvailable ? "Spoken replies: ready" : "Spoken replies: not available right now",
       imageAvailable || nativeImageGenerationReady ? "Image generation: ready" : "Image generation: not available right now",
       `Live calls: ${realtimeCapabilityDetail(config, state, runtime, audience)}`,
+      `Fallback lane: ${fallbackLaneDetail(config)}`,
       `Terminal lane: ${telegramTerminalLaneDetail(config)}`,
       "",
       "Natural usage",
@@ -282,6 +293,7 @@ export function renderCapabilityLines(
         : "Native Codex image generation mode: enabled, waiting for a bound desktop thread."
       : "Bridge-direct image generation mode: natural Telegram image requests use the configured bridge image provider when available.",
     `Realtime calls: ${realtimeCapabilityDetail(config, state, runtime, audience)}`,
+    `Fallback lane: ${fallbackLaneDetail(config)}`,
     ...operatorTerminalLaneLines(config, state),
     `Experimental mode note: ${SHADOW_WINDOW_NOTICE}`,
     "Natural usage: ask for images, videos, documents, or spoken replies directly in plain English; /image and /speak are optional shortcuts, not required.",

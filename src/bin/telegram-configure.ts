@@ -31,6 +31,7 @@ const BOT_COMMANDS = [
   { command: "providers", description: "Show active ASR, TTS, and image providers" },
   { command: "call", description: "Launch or inspect the live call Mini App" },
   { command: "hangup", description: "End the active live call" },
+  { command: "fallback", description: "Inspect or control the safe fallback Codex lane" },
   { command: "terminal", description: "Inspect or use the gated terminal Codex lane" },
   { command: "image", description: "Generate and send an image to this chat" },
   { command: "speak", description: "Make the next reply include generated audio" },

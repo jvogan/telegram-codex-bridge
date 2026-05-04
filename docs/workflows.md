@@ -79,7 +79,27 @@ Use `/call` only after:
 - `npm run bridge:capabilities` shows the realtime prerequisites are present
 - `npm run bridge:ctl -- call arm` succeeds
 
-## Workflow 4: Optional Safe Terminal Lane
+## Workflow 4: Optional Safe Fallback Lane
+
+The fallback lane is for safe, non-mutating Telegram work when the bound desktop Codex thread is already busy. It uses a separate bridge-owned autonomous Codex app-server thread and stays disabled unless explicitly enabled.
+
+```mermaid
+flowchart LR
+  BUSY["Bound desktop turn is busy"] --> POLICY["Fallback policy checks task"]
+  POLICY --> SAFE["Safe non-mutating work"]
+  POLICY --> PRIMARY["Repo edits, secrets, terminal, desktop, git, installs stay primary"]
+  SAFE --> FALLBACK["Fallback Codex thread answers"]
+  FALLBACK --> TELEGRAM["Reply returns to Telegram"]
+```
+
+Safe-lane posture:
+
+- `bridge.fallback_lane.routing = "when_desktop_busy_safe"`
+- `bridge.fallback_lane.allow_workspace_writes = false`
+- `/fallback status` inspects the lane
+- `/fallback enable` is explicit and reversible with `/fallback disable`
+
+## Workflow 5: Optional Safe Terminal Lane
 
 The terminal lane is for explicit `/terminal` work and extra Codex capacity. Start with the safe tmux lane before considering stronger powers. Telegram uses it only after `/terminal ask ...` or `/terminal chat on`.
 

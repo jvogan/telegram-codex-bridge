@@ -47,7 +47,7 @@ function parseConfigKeys() {
   let currentSection = "";
   for (const rawLine of configText.split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
+    if (!line) {
       continue;
     }
     const sectionMatch = line.match(/^\[([^\]]+)\]$/);
@@ -55,7 +55,8 @@ function parseConfigKeys() {
       currentSection = sectionMatch[1];
       continue;
     }
-    const keyMatch = line.match(/^([a-z_][a-z0-9_]*)\s*=/);
+    const keyLine = line.startsWith("#") ? line.slice(1).trim() : line;
+    const keyMatch = keyLine.match(/^([a-z_][a-z0-9_]*)\s*=/);
     if (keyMatch && currentSection) {
       keys.add(`${currentSection}.${keyMatch[1]}`);
     }

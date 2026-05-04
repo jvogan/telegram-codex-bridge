@@ -82,6 +82,19 @@ Be more careful with user-owned terminal adoption than bridge-owned tmux. Existi
 
 Do not put tokens, chat IDs, private paths, or private bot handles into terminal-lane prompts or docs. `terminal stop` only stops the matching nonce-owned tmux session; user-owned sessions are left running.
 
+## Fallback Lane Boundary
+
+The optional fallback lane is separate from the terminal lane. It starts a bridge-owned autonomous Codex app-server thread only when explicitly enabled and only for safe desktop-busy tasks.
+
+Default posture:
+
+- disabled unless `[bridge.fallback_lane]` or `/fallback enable` turns it on
+- `routing = "when_desktop_busy_safe"`
+- `allow_workspace_writes = false`
+- separate app-server port and separate `codex:fallback_thread_id` state
+
+Do not route secrets, terminal/desktop control, git operations, installs, deploys, or arbitrary workspace edits to the fallback lane. Those stay on the primary bridge path or the explicitly gated terminal lane.
+
 ## Public Repo Hygiene
 
 This repo includes automated checks for public safety:

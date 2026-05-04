@@ -14,6 +14,7 @@ describe("side-effectful Telegram slash commands", () => {
 
   test("does not classify private-only or read-only commands as side-effectful", () => {
     expect(sideEffectfulSlashCommandCategory("/terminal", ["status"])).toBeNull();
+    expect(sideEffectfulSlashCommandCategory("/fallback", ["status"])).toBeNull();
     expect(sideEffectfulSlashCommandCategory("/help", [])).toBeNull();
   });
 
@@ -21,6 +22,12 @@ describe("side-effectful Telegram slash commands", () => {
     expect(sideEffectfulSlashCommandCategory("/terminal", ["start"])).toBe("command:/terminal");
     expect(sideEffectfulSlashCommandCategory("/terminal", ["ask", "list"])).toBe("command:/terminal");
     expect(sideEffectfulSlashCommandCategory("/terminal", ["chat", "on"])).toBe("command:/terminal");
+  });
+
+  test("claims fallback commands that change lane state", () => {
+    expect(sideEffectfulSlashCommandCategory("/fallback", ["enable"])).toBe("command:/fallback");
+    expect(sideEffectfulSlashCommandCategory("/fallback@ExampleBridgeBot", ["disable"])).toBe("command:/fallback");
+    expect(sideEffectfulSlashCommandCategory("/fallback", ["reset"])).toBe("command:/fallback");
   });
 
   test("claims verified desktop thread switching commands", () => {

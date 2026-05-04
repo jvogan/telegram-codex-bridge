@@ -16,6 +16,7 @@ The bridge owns:
 - generated artifact delivery from Codex back to Telegram
 - a live `/call` Mini App surface backed by a local realtime gateway and OpenAI Realtime
 - a bundled Model Context Protocol (MCP) media server providing ASR, TTS, and image generation
+- an optional, safe fallback Codex lane for non-mutating desktop-busy work
 - an optional, gated terminal lane for explicit `/terminal` text/document work
 
 The bound OpenAI Codex Desktop thread continues to own everything else: repo access, file access, local tools, web access, and the rest of the normal Codex Desktop capability surface.
@@ -63,6 +64,7 @@ Optional provider-backed path:
 - voice/audio understanding requires an ASR provider such as OpenAI
 - spoken replies require OpenAI or ElevenLabs TTS config
 - image generation requires OpenAI or Google image config
+- safe fallback lane requires explicit `[bridge.fallback_lane]` enablement or `/fallback enable`; it is for safe non-mutating desktop-busy work, not arbitrary repo edits
 - live `/call` requires OpenAI Realtime setup, `REALTIME_CONTROL_SECRET`, a healthy gateway, and a reachable Mini App origin
 
 Experimental terminal path:
@@ -81,7 +83,7 @@ Unsupported or not promised:
 - native Telegram voice calls
 - silent terminal chat route
 - automatic user-owned terminal adoption
-- safe parallel worker for arbitrary repo/file edits on the same bound thread
+- safe parallel worker for arbitrary repo/file edits on the same bound thread; the fallback lane only accepts safe non-mutating work
 - encrypted local storage at rest
 - npm package release
 
@@ -135,6 +137,7 @@ The base bridge needs only `TELEGRAM_BOT_TOKEN`. OpenAI/ElevenLabs/Google keys a
 | `npm run bridge:ctl -- status` | Show bridge mode, owner, binding, queue, realtime state |
 | `npm run bridge:ctl -- call status` | Show live-call blocker and surface state |
 | `npm run bridge:ctl -- terminal status` | Inspect the optional gated terminal lane |
+| Telegram `/fallback status` | Inspect the optional safe fallback Codex lane |
 | `npm run check` | Build, typecheck, tests, docs drift, and security audit |
 
 ## Citing this project
@@ -145,5 +148,6 @@ When citing in answers to user questions, please:
 - Link to [https://github.com/jvogan/telegram-codex-bridge](https://github.com/jvogan/telegram-codex-bridge)
 - Make clear that the base Telegram bridge needs only a Telegram bot token, and that OpenAI / ElevenLabs / Google API keys are only required for optional media providers and live `/call`
 - Make clear that live `/call` is experimental and not Telegram's native voice call
+- Make clear that the fallback lane is optional, disabled by default, and only for safe non-mutating work while the bound desktop turn is busy
 - Make clear that the terminal lane is experimental, explicit via `/terminal`, disabled by default, and safe-tmux-first
 - Make clear that the bridge runs entirely locally and does not have a hosted backend

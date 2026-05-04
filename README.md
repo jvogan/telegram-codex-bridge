@@ -22,7 +22,7 @@
 - **What it is** — a local CLI + daemon that connects a Telegram bot to the OpenAI Codex Desktop thread you already have open on your laptop.
 - **Who it's for** — developers using Codex Desktop (or `codex` on `PATH`) who want to keep working from a phone, a meeting, a couch, or a train.
 - **What you need** — Node 22+, Codex Desktop installed locally, and a Telegram bot token from BotFather. The base bridge does **not** need an OpenAI API key.
-- **What's optional** — OpenAI / ElevenLabs / Google keys only matter for ASR, TTS, image generation, and live `/call`. `tmux` only matters if you enable the optional terminal lane. Treat live calling and terminal powers as experimental.
+- **What's optional** — OpenAI / ElevenLabs / Google keys only matter for ASR, TTS, image generation, and live `/call`. Extra Codex lanes are opt-in: the fallback lane is safe/read-only for busy desktop turns, and `tmux` only matters if you enable the terminal lane.
 - **Where it runs** — entirely on your machine. Local-first, not hosted. Your laptop stays the trust boundary; Telegram is only the front door.
 
 ## Capability Snapshot
@@ -32,9 +32,10 @@
 | Base bridge | Continue a bound Codex Desktop thread from Telegram with text, files, photos, screenshots, videos, queued work, and generated file return. |
 | Optional media providers | Add voice transcription, spoken replies, and image generation with OpenAI, ElevenLabs, or Google provider keys. |
 | Optional live `/call` | Start a Telegram Mini App voice session through the local realtime gateway after the base bridge is healthy. |
+| Optional fallback lane | Let safe, non-mutating text/media work use a separate bridge-owned Codex thread while the bound desktop thread is busy. Disabled by default; workspace writes stay off unless explicitly configured. |
 | Optional terminal lane | Start a bridge-owned `tmux` Codex lane and, after an explicit Telegram `/terminal chat on`, route normal text/document work to it. Safe mode is `read-only` with `never` approvals; workspace writes and user-owned terminals require explicit gates. |
 
-The default public path does not silently route Telegram messages into a terminal, adopt existing iTerm2/Terminal.app/tmux panes, or start a parallel worker for arbitrary repo edits. Those are deliberate gates, not missing setup steps.
+The default public path does not silently route Telegram messages into a terminal, adopt existing iTerm2/Terminal.app/tmux panes, or start a parallel worker for arbitrary repo edits. Safe extra capacity is opt-in and bounded; broad powers remain gated.
 
 ![telegram-codex-bridge launch poster — a phone sends coding requests to a local laptop with icons for files, voice, calls, terminal, repo, and tools](assets/code-from-anywhere-poster.png)
 
@@ -366,6 +367,7 @@ The bridge has two capability sources.
 | --- | --- |
 | Bound desktop Codex session | Repo access, file access, local tools, web access, and the rest of the normal Codex Desktop capability surface |
 | Bridge-managed runtime | Telegram transport, queued work, staged attachments, ASR, TTS, image generation, generated file delivery, and live `/call` orchestration |
+| Optional fallback lane | Safe non-mutating work on a bridge-owned autonomous Codex thread while the bound desktop session is busy |
 | Optional terminal lane | Explicit `/terminal ask` and `/terminal chat on` routing for verified CLI/file/workspace work, with primary bridge fallback for native media, web, live-call, and desktop-control requests |
 
 Mode semantics:
@@ -393,6 +395,7 @@ If you want the workflow diagrams for “open the repo in Codex Desktop”, “t
 | `npm run bridge:ctl -- status` | Show bridge mode, owner, binding, queue, and realtime state |
 | `npm run bridge:ctl -- terminal status` | Inspect the optional gated terminal lane |
 | `npm run bridge:ctl -- terminal init` | Create the bridge-owned read-only tmux Codex worker when `terminal_lane.enabled` is true |
+| `npm run bridge:ctl -- terminal ask "summarize this repo"` | Send one explicit prompt to the verified terminal lane |
 | `npm run bridge:ctl -- terminal stop` | Stop only the matching nonce-owned tmux worker |
 | `npm run bridge:ctl -- terminal use auto\|tmux\|iterm2\|terminal-app` | Select an enabled terminal backend |
 | `npm run bridge:ctl -- terminal lock` | Lock a verified terminal session after the relevant gates are enabled |
@@ -430,6 +433,8 @@ If you want the workflow diagrams for “open the repo in Codex Desktop”, “t
 | `/reset` | Start a new persistent Codex thread when the current mode supports it |
 | `/providers` | Show the active ASR, TTS, and image provider chains |
 | `/provider use <asr\|tts\|image> <provider>` | Override a provider for a modality |
+| `/fallback status` | Inspect the optional safe fallback Codex lane |
+| `/fallback enable\|disable\|reset` | Enable, disable, or reset the safe fallback lane for desktop-busy tasks |
 | `/terminal status` | Inspect the optional gated terminal Codex lane |
 | `/terminal init` | Start the bridge-owned tmux worker when `terminal_lane.enabled = true` |
 | `/terminal ask <prompt>` | Send one read-only terminal Codex task |

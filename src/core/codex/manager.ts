@@ -5,15 +5,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { defaultBridgeMode, type BridgeConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { BridgeState } from "../state.js";
-import type { ActiveTaskRecord, BackendStatus, BoundThread, BridgeMode, BridgeOwner } from "../types.js";
+import type { ActiveTaskRecord, BackendStatus, BoundThread, BridgeLane, BridgeMode, BridgeOwner } from "../types.js";
 import type { JsonRpcRequest } from "./protocol.js";
 import {
   AutonomousThreadBackend,
+  type AppServerBackendOptions,
   type BridgeBackendUnavailableEvent,
   type BridgeBackend,
   type BridgeTurnFinalTextEvent,
   type BridgeTurnStartedEvent,
   type CodexTurnInput,
+  type ResolvedAppServerBackendOptions,
+  resolveAppServerBackendOptions,
   SharedThreadBackend,
   ShadowWindowBackend,
 } from "./session.js";
@@ -63,7 +66,16 @@ async function waitForPortClosed(port: number, timeoutMs = 10_000): Promise<void
 }
 
 interface BridgeBackendManagerOptions {
-  createBackend?: (mode: BridgeMode, boundThread: BoundThread | null) => BridgeBackend;
+  lane?: BridgeLane;
+  forcedMode?: BridgeMode;
+  appServerPort?: number;
+  autonomousThreadStateKey?: string;
+  workdir?: string;
+  createBackend?: (
+    mode: BridgeMode,
+    boundThread: BoundThread | null,
+    backendOptions: ResolvedAppServerBackendOptions,
+  ) => BridgeBackend;
   waitForPortClosed?: (port: number, timeoutMs?: number) => Promise<void>;
 }
 
@@ -71,7 +83,13 @@ export class BridgeBackendManager extends EventEmitter {
   private backend: BridgeBackend | null = null;
   private signature: string | null = null;
   private lifecycleChain: Promise<void> = Promise.resolve();
-  private readonly createBackendImpl: (mode: BridgeMode, boundThread: BoundThread | null) => BridgeBackend;
+  private readonly forcedMode: BridgeMode | null;
+  private readonly backendOptions: ResolvedAppServerBackendOptions;
+  private readonly createBackendImpl: (
+    mode: BridgeMode,
+    boundThread: BoundThread | null,
+    backendOptions: ResolvedAppServerBackendOptions,
+  ) => BridgeBackend;
   private readonly waitForPortClosedImpl: (port: number, timeoutMs?: number) => Promise<void>;
 
   constructor(
@@ -81,6 +99,8 @@ export class BridgeBackendManager extends EventEmitter {
     options: BridgeBackendManagerOptions = {},
   ) {
     super();
+    this.forcedMode = options.forcedMode ?? null;
+    this.backendOptions = resolveAppServerBackendOptions(config, options satisfies AppServerBackendOptions);
     this.createBackendImpl = options.createBackend ?? ((mode, boundThread) => this.createBackend(mode, boundThread));
     this.waitForPortClosedImpl = options.waitForPortClosed ?? waitForPortClosed;
   }
@@ -99,12 +119,15 @@ export class BridgeBackendManager extends EventEmitter {
       this.backend = null;
       this.signature = null;
       if (modeUsesAppServer(backend.mode)) {
-        await waitForPortClosed(this.config.codex.app_server_port).catch(() => undefined);
+        await this.waitForPortClosedImpl(this.backendOptions.appServerPort).catch(() => undefined);
       }
     });
   }
 
   getMode(): BridgeMode {
+    if (this.forcedMode) {
+      return this.forcedMode;
+    }
     return this.state.getMode(defaultBridgeMode(this.config));
   }
 
@@ -289,11 +312,11 @@ export class BridgeBackendManager extends EventEmitter {
       this.backend = null;
       this.signature = null;
       if (modeUsesAppServer(mode)) {
-        await this.waitForPortClosedImpl(this.config.codex.app_server_port);
+        await this.waitForPortClosedImpl(this.backendOptions.appServerPort);
       }
     }
 
-    const candidate = this.createBackendImpl(mode, boundThread);
+    const candidate = this.createBackendImpl(mode, boundThread, this.backendOptions);
     candidate.onServerRequest((request: JsonRpcRequest) => this.emit("serverRequest", request));
     candidate.onTurnStarted((event: BridgeTurnStartedEvent) => this.emit("turnStarted", event));
     candidate.onTurnFinalText((event: BridgeTurnFinalTextEvent) => this.emit("turnFinalText", event));
@@ -340,12 +363,12 @@ export class BridgeBackendManager extends EventEmitter {
   private createBackend(mode: BridgeMode, boundThread: BoundThread | null): BridgeBackend {
     switch (mode) {
       case "autonomous-thread":
-        return new AutonomousThreadBackend(this.config, this.state, this.logger);
+        return new AutonomousThreadBackend(this.config, this.state, this.logger, this.backendOptions);
       case "shared-thread-resume":
         if (!boundThread) {
           throw new Error("shared-thread-resume mode requires a bound desktop thread.");
         }
-        return new SharedThreadBackend(this.config, this.state, this.logger, boundThread);
+        return new SharedThreadBackend(this.config, this.state, this.logger, boundThread, this.backendOptions);
       case "shadow-window":
         if (!boundThread) {
           throw new Error("shadow-window mode requires a bound desktop thread.");

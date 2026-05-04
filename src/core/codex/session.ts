@@ -4,10 +4,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { BridgeConfig } from "../config.js";
+import { resolveFallbackLaneConfig, type BridgeConfig } from "../config.js";
 import type { Logger } from "../logger.js";
 import { BridgeState } from "../state.js";
-import type { BackendStatus, BoundThread, BridgeMode } from "../types.js";
+import type { BackendStatus, BoundThread, BridgeLane, BridgeMode } from "../types.js";
 import type { JsonRpcId, JsonRpcRequest, TurnResult } from "./protocol.js";
 import { CodexAppServerClient } from "./client.js";
 import { RolloutWatcher } from "../desktop/rollout-watcher.js";
@@ -72,6 +72,42 @@ interface PendingTurn {
   reject(error: Error): void;
 }
 
+export interface AppServerBackendOptions {
+  lane?: BridgeLane;
+  appServerPort?: number;
+  autonomousThreadStateKey?: string;
+  workdir?: string;
+}
+
+export interface ResolvedAppServerBackendOptions {
+  lane: BridgeLane;
+  appServerPort: number;
+  autonomousThreadStateKey: string;
+  workdir: string;
+  sandbox: BridgeConfig["codex"]["sandbox"];
+}
+
+export function autonomousThreadStateKeyForLane(lane: BridgeLane): string {
+  return lane === "primary" ? "codex:thread_id" : "codex:fallback_thread_id";
+}
+
+export function resolveAppServerBackendOptions(
+  config: BridgeConfig,
+  options: AppServerBackendOptions = {},
+): ResolvedAppServerBackendOptions {
+  const lane = options.lane ?? "primary";
+  const fallbackLane = resolveFallbackLaneConfig(config);
+  const fallbackWorkdir = fallbackLane.workdir ?? config.codex.workdir;
+  return {
+    lane,
+    appServerPort: options.appServerPort
+      ?? (lane === "fallback" ? fallbackLane.app_server_port : config.codex.app_server_port),
+    autonomousThreadStateKey: options.autonomousThreadStateKey ?? autonomousThreadStateKeyForLane(lane),
+    workdir: options.workdir ?? (lane === "fallback" ? fallbackWorkdir : config.codex.workdir),
+    sandbox: lane === "fallback" && !fallbackLane.allow_workspace_writes ? "read-only" : config.codex.sandbox,
+  };
+}
+
 function mediaMcpArgs(config: BridgeConfig): { command: string; args: string[]; cwd: string } {
   const builtPath = join(config.repoRoot, "dist", "bin", "media-mcp.js");
   const sourcePath = join(config.repoRoot, "src", "bin", "media-mcp.ts");
@@ -86,12 +122,12 @@ function mediaMcpArgs(config: BridgeConfig): { command: string; args: string[]; 
   return { command, args, cwd: config.repoRoot };
 }
 
-function buildAppServerArgs(config: BridgeConfig): string[] {
+function buildAppServerArgs(config: BridgeConfig, options: ResolvedAppServerBackendOptions): string[] {
   const mcp = mediaMcpArgs(config);
   return [
     "app-server",
     "--listen",
-    `ws://127.0.0.1:${config.codex.app_server_port}`,
+    `ws://127.0.0.1:${options.appServerPort}`,
     "-c",
     `mcp_servers.telegram_codex_bridge_media.command="${mcp.command}"`,
     "-c",
@@ -113,9 +149,10 @@ abstract class AppServerBackend extends EventEmitter implements BridgeBackend {
     protected readonly config: BridgeConfig,
     protected readonly state: BridgeState,
     protected readonly logger: Logger,
+    protected readonly backendOptions: ResolvedAppServerBackendOptions = resolveAppServerBackendOptions(config),
   ) {
     super();
-    this.client = new CodexAppServerClient(config.bridge.codex_binary, buildAppServerArgs(config), logger);
+    this.client = new CodexAppServerClient(config.bridge.codex_binary, buildAppServerArgs(config, this.backendOptions), logger);
     this.client.on("notification", notification => this.handleNotification(notification as { method: string; params?: any }));
     this.client.on("serverRequest", request => this.emit("serverRequest", request));
     this.client.on("exit", code => {
@@ -140,7 +177,7 @@ abstract class AppServerBackend extends EventEmitter implements BridgeBackend {
 
   async start(): Promise<void> {
     await this.client.start();
-    await this.client.connect(`ws://127.0.0.1:${this.config.codex.app_server_port}`);
+    await this.client.connect(`ws://127.0.0.1:${this.backendOptions.appServerPort}`);
     await this.client.request("initialize", {
       protocolVersion: 1,
       capabilities: { experimentalApi: true },
@@ -321,18 +358,18 @@ export class AutonomousThreadBackend extends AppServerBackend {
   readonly mode = "autonomous-thread" as const;
 
   protected override async initializeThread(): Promise<void> {
-    if (!this.config.codex.workdir) {
+    if (!this.backendOptions.workdir) {
       throw new Error("codex.workdir is required in autonomous-thread mode.");
     }
-    const existingThreadId = this.state.getSetting<string | null>("codex:thread_id", null);
+    const existingThreadId = this.state.getSetting<string | null>(this.backendOptions.autonomousThreadStateKey, null);
     if (existingThreadId) {
       try {
         await this.client.request("thread/resume", {
           threadId: existingThreadId,
           persistExtendedHistory: true,
-          cwd: this.config.codex.workdir,
+          cwd: this.backendOptions.workdir,
           approvalPolicy: this.config.codex.approval_policy,
-          sandbox: this.config.codex.sandbox,
+          sandbox: this.backendOptions.sandbox,
         });
         this.threadId = existingThreadId;
         return;
@@ -346,7 +383,7 @@ export class AutonomousThreadBackend extends AppServerBackend {
   }
 
   override getExecutionCwd(): string | null {
-    return this.config.codex.workdir || null;
+    return this.backendOptions.workdir || null;
   }
 
   override supportsResetThread(): boolean {
@@ -359,16 +396,16 @@ export class AutonomousThreadBackend extends AppServerBackend {
 
   private async createFreshThread(): Promise<string> {
     const created = await this.client.request<{ thread: { id: string } }>("thread/start", {
-      cwd: this.config.codex.workdir,
+      cwd: this.backendOptions.workdir,
       approvalPolicy: this.config.codex.approval_policy,
-      sandbox: this.config.codex.sandbox,
+      sandbox: this.backendOptions.sandbox,
       ephemeral: false,
       experimentalRawEvents: false,
       persistExtendedHistory: true,
       ...(this.config.codex.model ? { model: this.config.codex.model } : {}),
     });
     this.threadId = created.thread.id;
-    this.state.setSetting("codex:thread_id", this.threadId);
+    this.state.setSetting(this.backendOptions.autonomousThreadStateKey, this.threadId);
     return this.threadId;
   }
 }
@@ -381,8 +418,9 @@ export class SharedThreadBackend extends AppServerBackend {
     state: BridgeState,
     logger: Logger,
     private readonly boundThread: BoundThread,
+    backendOptions?: ResolvedAppServerBackendOptions,
   ) {
-    super(config, state, logger);
+    super(config, state, logger, backendOptions);
   }
 
   protected override async initializeThread(): Promise<void> {

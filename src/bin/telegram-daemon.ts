@@ -87,6 +87,9 @@ import {
 import { deliverAudioArtifacts } from "../core/telegram/audio-delivery.js";
 import { deliverDocumentArtifacts } from "../core/telegram/document-delivery.js";
 import { sanitizeTelegramFinalText } from "../core/telegram/final-text.js";
+import {
+  selectTelegramTaskLane,
+} from "../core/telegram/fallback-routing.js";
 import { deliverImageArtifacts } from "../core/telegram/image-delivery.js";
 import {
   buildDirectImageGenerationPrompt,
@@ -172,6 +175,7 @@ import type {
   ActiveCallRecord,
   ActiveTaskRecord,
   BoundThread,
+  BridgeLane,
   BridgeMode,
   BridgeOwner,
   CallArtifact,
@@ -226,6 +230,10 @@ const telegram = new TelegramClient(requireTelegramBotToken(env), logger);
 const registry = new MediaRegistry(config, env, state);
 const artifacts = new ArtifactStore(config.storageRoot, state);
 const codex = new BridgeBackendManager(config, state, logger);
+const fallbackCodex = new BridgeBackendManager(config, state, logger, {
+  lane: "fallback",
+  forcedMode: "autonomous-thread",
+});
 const locator = new DesktopThreadLocator();
 const sharedThreadRolloutWatcher = new RolloutWatcher();
 const callStore = new CallStore(config, env, state);
@@ -272,6 +280,7 @@ interface PersistedTerminalTask {
 
 interface PendingApprovalRequest {
   requestId: string | number;
+  lane: BridgeLane;
   method: string;
   params: any;
 }
@@ -293,6 +302,7 @@ interface PendingUserInputQuestion {
 
 interface PendingUserInputRequest {
   requestId: string | number;
+  lane: BridgeLane;
   method: string;
   params: any;
   chatId: string;
@@ -369,8 +379,8 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-function getDynamicToolAllowedRoots(): string[] {
-  const roots = [codex.getExecutionCwd() ?? process.cwd(), config.storageRoot];
+function getDynamicToolAllowedRoots(backend: BridgeBackendManager = codex): string[] {
+  const roots = [backend.getExecutionCwd() ?? process.cwd(), config.storageRoot];
   return [...new Set(roots.map(root => resolve(root)))];
 }
 
@@ -498,7 +508,7 @@ function inspectableKindForPath(path: string): "image" | "document" | "audio" | 
   return inspectableFileModality(path);
 }
 
-async function inspectLocalFilePath(path: string): Promise<{
+async function inspectLocalFilePath(path: string, backend: BridgeBackendManager = codex): Promise<{
   contentItems: Array<Record<string, unknown>>;
   openPath: string;
   summary: string;
@@ -508,7 +518,7 @@ async function inspectLocalFilePath(path: string): Promise<{
     throw new Error("Unsupported file type. Allowed file types are images, documents, audio, and video.");
   }
 
-  const allowedPath = await resolveAllowedInspectablePath(path, getDynamicToolAllowedRoots());
+  const allowedPath = await resolveAllowedInspectablePath(path, getDynamicToolAllowedRoots(backend));
   void openFileOnDesktop(allowedPath).catch(error => {
     logger.warn("failed to open inspected file on desktop", {
       path: allowedPath,
@@ -597,11 +607,14 @@ async function inspectLocalFilePath(path: string): Promise<{
   };
 }
 
-async function handleDynamicToolCall(request: { id: string | number; params?: DynamicToolCallRequestParams }): Promise<void> {
+async function handleDynamicToolCall(
+  request: { id: string | number; params?: DynamicToolCallRequestParams },
+  backend: BridgeBackendManager = codex,
+): Promise<void> {
   const params = request.params ?? {};
   const toolName = getDynamicToolName(params);
   if (!toolName) {
-    await codex.respondToServerRequest(request.id, {
+    await backend.respondToServerRequest(request.id, {
       contentItems: [
         {
           type: "inputText",
@@ -614,7 +627,7 @@ async function handleDynamicToolCall(request: { id: string | number; params?: Dy
   }
 
   if (!["view_image", "view_file", "view_document", "view_audio", "view_video"].includes(toolName)) {
-    await codex.respondToServerRequest(request.id, {
+    await backend.respondToServerRequest(request.id, {
       contentItems: [
         {
           type: "inputText",
@@ -639,7 +652,7 @@ async function handleDynamicToolCall(request: { id: string | number; params?: Dy
       : null;
 
   if (!filePath && !imageUrl) {
-    await codex.respondToServerRequest(request.id, {
+    await backend.respondToServerRequest(request.id, {
       contentItems: [
         {
           type: "inputText",
@@ -655,9 +668,9 @@ async function handleDynamicToolCall(request: { id: string | number; params?: Dy
     if (filePath) {
       const candidatePath = filePath.startsWith("/")
         ? filePath
-        : resolve(codex.getExecutionCwd() ?? process.cwd(), filePath);
-      const inspected = await inspectLocalFilePath(candidatePath);
-      await codex.respondToServerRequest(request.id, {
+        : resolve(backend.getExecutionCwd() ?? process.cwd(), filePath);
+      const inspected = await inspectLocalFilePath(candidatePath, backend);
+      await backend.respondToServerRequest(request.id, {
         contentItems: inspected.contentItems,
         success: true,
       });
@@ -666,7 +679,7 @@ async function handleDynamicToolCall(request: { id: string | number; params?: Dy
     if (!imageUrl?.startsWith("data:image/")) {
       throw new Error("view_image only accepts local file paths or data URLs.");
     }
-    await codex.respondToServerRequest(request.id, {
+    await backend.respondToServerRequest(request.id, {
       contentItems: [
         {
           type: "inputImage",
@@ -682,7 +695,7 @@ async function handleDynamicToolCall(request: { id: string | number; params?: Dy
       toolName,
       error: error instanceof Error ? error.message : String(error),
     });
-    await codex.respondToServerRequest(request.id, {
+    await backend.respondToServerRequest(request.id, {
       contentItems: [
         {
           type: "inputText",
@@ -2046,11 +2059,11 @@ async function flushPreviewText(taskId: string): Promise<void> {
   }
 }
 
-async function syncActiveTaskSubmittedPlaceholder(): Promise<void> {
+async function syncActiveTaskSubmittedPlaceholder(mode: BridgeMode = codex.getMode()): Promise<void> {
   if (!activeTask) {
     return;
   }
-  const submittedText = buildTurnSubmittedPlaceholder(codex.getMode());
+  const submittedText = buildTurnSubmittedPlaceholder(mode);
   if (activeTask.placeholderMessageId) {
     await telegram.editMessageText(activeTask.task.chatId, activeTask.placeholderMessageId, submittedText);
     return;
@@ -2395,18 +2408,22 @@ function parseUserInputReply(request: PendingUserInputRequest, text: string): Re
   return null;
 }
 
-async function handleServerRequest(request: { id: string | number; method: string; params?: any }): Promise<void> {
+async function handleServerRequest(
+  request: { id: string | number; method: string; params?: any },
+  backend: BridgeBackendManager = codex,
+  lane: BridgeLane = "primary",
+): Promise<void> {
   if (isDynamicToolCallRequest(request.method)) {
-    await handleDynamicToolCall(request as { id: string | number; params?: DynamicToolCallRequestParams });
+    await handleDynamicToolCall(request as { id: string | number; params?: DynamicToolCallRequestParams }, backend);
     return;
   }
   const params = request.params ?? {};
-  if (!activeTask) {
-    await codex.rejectServerRequest(request.id, "No active Telegram task context for this approval request.");
+  if (!activeTask || (activeTask.task.lane ?? "primary") !== lane) {
+    await backend.rejectServerRequest(request.id, "No active Telegram task context for this approval request.");
     return;
   }
-  if (!codex.canRelayApprovals()) {
-    await codex.rejectServerRequest(
+  if (!backend.canRelayApprovals()) {
+    await backend.rejectServerRequest(
       request.id,
       "This bridge mode does not support Telegram approval relay. Approve the action in the Codex desktop app.",
     );
@@ -2419,15 +2436,16 @@ async function handleServerRequest(request: { id: string | number; method: strin
     "item/permissions/requestApproval",
   ].includes(request.method)) {
     if (request.method === "item/tool/requestUserInput") {
-      await handleUserInputRequest(request);
+      await handleUserInputRequest(request, backend, lane);
       return;
     }
-    await codex.rejectServerRequest(request.id, `Unsupported server request: ${request.method}`);
+    await backend.rejectServerRequest(request.id, `Unsupported server request: ${request.method}`);
     return;
   }
   const localId = randomUUID().slice(0, 12);
   pendingApprovalRequests.set(localId, {
     requestId: request.id,
+    lane,
     method: request.method,
     params,
   });
@@ -2448,11 +2466,15 @@ async function handleServerRequest(request: { id: string | number; method: strin
   });
 }
 
-async function handleUserInputRequest(request: { id: string | number; method: string; params?: any }): Promise<void> {
+async function handleUserInputRequest(
+  request: { id: string | number; method: string; params?: any },
+  backend: BridgeBackendManager = codex,
+  lane: BridgeLane = "primary",
+): Promise<void> {
   const params = request.params ?? {};
   const questions = normalizeUserInputQuestions(params);
   if (questions.length === 0) {
-    await codex.rejectServerRequest(request.id, "User input request had no questions.");
+    await backend.rejectServerRequest(request.id, "User input request had no questions.");
     return;
   }
   const localId = randomUUID().slice(0, 12);
@@ -2466,6 +2488,7 @@ async function handleUserInputRequest(request: { id: string | number; method: st
   );
   pendingUserInputRequests.set(localId, {
     requestId: request.id,
+    lane,
     method: request.method,
     params,
     chatId: activeTask!.task.chatId,
@@ -2492,36 +2515,37 @@ async function resolveApproval(callbackQuery: TelegramCallbackQuery): Promise<vo
     await telegram.answerCallbackQuery(callbackQuery.id, "Approval request no longer exists.");
     return;
   }
+  const backend = codexForLane(request.lane ?? "primary");
   try {
     switch (request.method) {
       case "item/commandExecution/requestApproval":
       case "item/fileChange/requestApproval":
       case "item/tool/requestUserInput":
         if (parsed.action === "accept") {
-          await codex.respondToServerRequest(request.requestId, { decision: "accept" });
+          await backend.respondToServerRequest(request.requestId, { decision: "accept" });
         } else if (parsed.action === "acceptSession") {
-          await codex.respondToServerRequest(request.requestId, { decision: "acceptForSession" });
+          await backend.respondToServerRequest(request.requestId, { decision: "acceptForSession" });
         } else if (parsed.action === "deny") {
-          await codex.respondToServerRequest(request.requestId, { decision: "decline" });
+          await backend.respondToServerRequest(request.requestId, { decision: "decline" });
         } else {
-          await codex.respondToServerRequest(request.requestId, { decision: "cancel" });
+          await backend.respondToServerRequest(request.requestId, { decision: "cancel" });
         }
         break;
       case "item/permissions/requestApproval":
         if (parsed.action === "turn" || parsed.action === "session") {
-          await codex.respondToServerRequest(request.requestId, {
+          await backend.respondToServerRequest(request.requestId, {
             permissions: request.params.permissions ?? {},
             scope: parsed.action,
           });
         } else if (parsed.action === "cancel") {
-          await codex.rejectServerRequest(request.requestId, "Permission request cancelled from Telegram.");
-          await codex.interruptActiveTurn();
+          await backend.rejectServerRequest(request.requestId, "Permission request cancelled from Telegram.");
+          await backend.interruptActiveTurn();
         } else {
-          await codex.rejectServerRequest(request.requestId, "Permission request denied from Telegram.");
+          await backend.rejectServerRequest(request.requestId, "Permission request denied from Telegram.");
         }
         break;
       default:
-        await codex.rejectServerRequest(request.requestId, `Unsupported approval request: ${request.method}`);
+        await backend.rejectServerRequest(request.requestId, `Unsupported approval request: ${request.method}`);
         break;
     }
   } catch (error) {
@@ -2533,7 +2557,7 @@ async function resolveApproval(callbackQuery: TelegramCallbackQuery): Promise<vo
       requestId: String(request.requestId),
       error: error instanceof Error ? error.message : String(error),
     });
-    await codex.interruptActiveTurn().catch(() => undefined);
+    await backend.interruptActiveTurn().catch(() => undefined);
     await telegram.answerCallbackQuery(callbackQuery.id, "Approval failed and was expired.");
     return;
   }
@@ -2577,7 +2601,7 @@ async function resolvePendingUserInput(message: TelegramMessage, text: string): 
     return true;
   }
   try {
-    await codex.respondToServerRequest(pending.request.requestId, { answers });
+    await codexForLane(pending.request.lane ?? "primary").respondToServerRequest(pending.request.requestId, { answers });
     pendingUserInputRequests.delete(pending.localId);
     state.resolvePendingUserInputDiagnostic(pending.localId);
     await telegram.sendMessage(String(message.chat.id), "User input sent back to Codex.", {
@@ -2818,8 +2842,15 @@ async function maybeSendGeneratedImages(chatId: string, options?: {
 function generatedDocumentAllowedRoots(): string[] {
   const roots = new Set<string>();
   const executionCwd = codex.getExecutionCwd();
+  const fallbackExecutionCwd = fallbackCodex.getExecutionCwd();
   const boundCwd = codex.getBoundThread()?.cwd ?? state.getBoundThread()?.cwd ?? null;
-  for (const candidate of [executionCwd, boundCwd, config.codex.workdir]) {
+  for (const candidate of [
+    executionCwd,
+    fallbackExecutionCwd,
+    boundCwd,
+    config.codex.workdir,
+    config.bridge.fallback_lane?.workdir,
+  ]) {
     if (candidate) {
       addGeneratedOutputRootVariants(roots, candidate);
     }
@@ -2868,11 +2899,14 @@ function addGeneratedOutputRootVariants(roots: Set<string>, basePath: string): v
 function generatedInlineImageAllowedRoots(): string[] {
   const roots = new Set<string>();
   const executionCwd = codex.getExecutionCwd();
+  const fallbackExecutionCwd = fallbackCodex.getExecutionCwd();
   const boundCwd = codex.getBoundThread()?.cwd ?? state.getBoundThread()?.cwd ?? null;
   for (const candidate of [
     executionCwd,
+    fallbackExecutionCwd,
     boundCwd,
     config.codex.workdir,
+    config.bridge.fallback_lane?.workdir,
     join(config.storageRoot, "manual-send"),
     join(config.storageRoot, "outbound"),
     "/tmp",
@@ -2889,8 +2923,15 @@ function generatedInlineImageDiscoveryRoots(): string[] {
   roots.add(resolve(join(config.storageRoot, "manual-send")));
   roots.add(resolve(join(config.storageRoot, "outbound")));
   const executionCwd = codex.getExecutionCwd();
+  const fallbackExecutionCwd = fallbackCodex.getExecutionCwd();
   const boundCwd = codex.getBoundThread()?.cwd ?? state.getBoundThread()?.cwd ?? null;
-  for (const candidate of [executionCwd, boundCwd, config.codex.workdir]) {
+  for (const candidate of [
+    executionCwd,
+    fallbackExecutionCwd,
+    boundCwd,
+    config.codex.workdir,
+    config.bridge.fallback_lane?.workdir,
+  ]) {
     if (!candidate) {
       continue;
     }
@@ -4189,13 +4230,13 @@ async function sharedThreadExternalHoldReason(): Promise<string | null> {
     if (currentActiveTask?.turnId && currentActiveTask.turnId === activity.activeTurnId) {
       return null;
     }
-    return "codex_busy";
+    return "desktop_turn_active";
   } catch (error) {
     logger.warn("failed to inspect shared-thread rollout activity", {
       rolloutPath: binding.rolloutPath,
       error: error instanceof Error ? error.message : String(error),
     });
-    return "codex_busy";
+    return "desktop_turn_unverified";
   }
 }
 
@@ -4242,6 +4283,82 @@ async function effectiveQueueHoldReason(): Promise<string | null> {
     return immediate;
   }
   return sharedThreadExternalHoldReason();
+}
+
+function codexForLane(lane: BridgeLane): BridgeBackendManager {
+  return lane === "fallback" ? fallbackCodex : codex;
+}
+
+function fallbackLaneEnabled(): boolean {
+  return state.getSetting<boolean | null>("bridge:fallback_lane_enabled_override", null)
+    ?? Boolean(config.bridge.fallback_lane?.enabled);
+}
+
+function fallbackRoutingPolicy(): { enabled: boolean; allowWorkspaceWrites: boolean } {
+  return {
+    enabled: fallbackLaneEnabled(),
+    allowWorkspaceWrites: config.bridge.fallback_lane?.allow_workspace_writes ?? false,
+  };
+}
+
+function taskCanUseFallbackWhenHeld(task: QueuedTelegramTask | null, holdReason: string | null): boolean {
+  if (!task || activeTask) {
+    return false;
+  }
+  return selectTelegramTaskLane({
+    task,
+    holdReason,
+    policy: fallbackRoutingPolicy(),
+  }) === "fallback";
+}
+
+async function selectedTaskLane(task: QueuedTelegramTask): Promise<{
+  lane: BridgeLane;
+  holdReason: string | null;
+}> {
+  const holdReason = await effectiveQueueHoldReason();
+  if (!holdReason) {
+    return { lane: "primary", holdReason: null };
+  }
+  return {
+    lane: selectTelegramTaskLane({
+      task,
+      holdReason,
+      policy: fallbackRoutingPolicy(),
+    }),
+    holdReason,
+  };
+}
+
+async function ensureFallbackCodexReady(): Promise<void> {
+  await fallbackCodex.sync(true, true);
+}
+
+async function updateQueuedTaskPlaceholder(
+  task: QueuedTelegramTask,
+  aheadCount: number,
+  holdReason: string | null,
+  placeholderMessageId: number | null,
+): Promise<number> {
+  const queuedText = buildQueuedPlaceholder(task, aheadCount, holdReason);
+  if (placeholderMessageId) {
+    try {
+      await telegram.editMessageText(task.chatId, placeholderMessageId, queuedText);
+      state.updateQueueStatus(task.id, "pending", {
+        placeholderMessageId,
+        errorText: null,
+      });
+      return placeholderMessageId;
+    } catch {
+      // Fall through and send a fresh queued placeholder.
+    }
+  }
+  const placeholder = await telegram.sendMessage(task.chatId, queuedText);
+  state.updateQueueStatus(task.id, "pending", {
+    placeholderMessageId: placeholder.message_id,
+    errorText: null,
+  });
+  return placeholder.message_id;
 }
 
 async function effectiveCallStartBlocker(input: {
@@ -4291,6 +4408,8 @@ async function processQueuedTask(task: QueuedTelegramTask): Promise<void> {
   let placeholderMessageId = state.getQueueState(task.id)?.placeholderMessageId ?? null;
   const needsImmediatePlaceholder = taskNeedsImmediatePlaceholder(effectiveTask);
   let startedAt = Date.now();
+  let selectedLane: BridgeLane = fallbackLaneEnabled() ? effectiveTask.lane ?? "primary" : "primary";
+  let turnBackend = codexForLane(selectedLane);
   try {
     if (!placeholderMessageId && needsImmediatePlaceholder) {
       placeholderMessageId = (await telegram.sendMessage(task.chatId, telegramProgressText())).message_id;
@@ -4310,36 +4429,41 @@ async function processQueuedTask(task: QueuedTelegramTask): Promise<void> {
     if (await tryCompleteQueuedTerminalCodexTask(effectiveTask, placeholderMessageId)) {
       return;
     }
-    const holdReason = await effectiveQueueHoldReason();
-    if (holdReason) {
+    const selection = await selectedTaskLane(effectiveTask);
+    selectedLane = selection.lane;
+    turnBackend = codexForLane(selectedLane);
+    if (selection.holdReason && selectedLane === "primary") {
       state.updateQueueStatus(effectiveTask.id, "pending", {
         placeholderMessageId,
         errorText: null,
       });
-      const queuedText = buildQueuedPlaceholder(effectiveTask, 0, holdReason);
-      if (placeholderMessageId) {
-        await telegram.editMessageText(effectiveTask.chatId, placeholderMessageId, queuedText).catch(async () => {
-          const placeholder = await telegram.sendMessage(effectiveTask.chatId, queuedText);
-          placeholderMessageId = placeholder.message_id;
-          state.updateQueueStatus(effectiveTask.id, "pending", {
-            placeholderMessageId,
-            errorText: null,
-          });
-        });
-      } else {
-        const placeholder = await telegram.sendMessage(effectiveTask.chatId, queuedText);
-        placeholderMessageId = placeholder.message_id;
-        state.updateQueueStatus(effectiveTask.id, "pending", {
-          placeholderMessageId,
-          errorText: null,
-        });
-      }
+      await updateQueuedTaskPlaceholder(effectiveTask, 0, selection.holdReason, placeholderMessageId);
       return;
+    }
+    if (selectedLane === "fallback" && effectiveTask.lane !== "fallback") {
+      effectiveTask = { ...effectiveTask, lane: "fallback" };
+      state.replaceTask(effectiveTask);
     }
     if (await tryCompleteQueuedDirectImageGenerationTask(effectiveTask, placeholderMessageId)) {
       return;
     }
     state.updateQueueStatus(effectiveTask.id, "processing", { placeholderMessageId });
+    if (selectedLane === "fallback") {
+      try {
+        await ensureFallbackCodexReady();
+      } catch (error) {
+        logger.warn("fallback lane was selected but could not start; leaving task queued", {
+          taskId: effectiveTask.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        state.updateQueueStatus(effectiveTask.id, "pending", {
+          placeholderMessageId,
+          errorText: null,
+        });
+        await updateQueuedTaskPlaceholder(effectiveTask, 0, "fallback_unavailable", placeholderMessageId);
+        return;
+      }
+    }
     const inputs = await buildTurnInputs(effectiveTask, placeholderMessageId);
     effectiveTask = state.getTask(effectiveTask.id) ?? effectiveTask;
     if (await tryCompleteQueuedDirectImageGenerationTask(effectiveTask, placeholderMessageId)) {
@@ -4350,7 +4474,7 @@ async function processQueuedTask(task: QueuedTelegramTask): Promise<void> {
       await telegram.editMessageText(
         effectiveTask.chatId,
         placeholderMessageId,
-        buildTurnStartPlaceholder(codex.getMode()),
+        buildTurnStartPlaceholder(turnBackend.getMode()),
       );
     }
     activeTask = {
@@ -4362,18 +4486,19 @@ async function processQueuedTask(task: QueuedTelegramTask): Promise<void> {
     };
     state.setActiveTask({
       queueId: effectiveTask.id,
+      lane: selectedLane,
       chatId: effectiveTask.chatId,
       placeholderMessageId,
       startedAt,
-      mode: codex.getMode(),
+      mode: turnBackend.getMode(),
       stage: "preparing",
-      threadId: codex.getThreadId(),
-      boundThreadId: codex.getBoundThread()?.threadId ?? null,
-      rolloutPath: codex.getBoundThread()?.rolloutPath ?? null,
+      threadId: turnBackend.getThreadId(),
+      boundThreadId: turnBackend.getBoundThread()?.threadId ?? null,
+      rolloutPath: turnBackend.getBoundThread()?.rolloutPath ?? null,
       turnId: null,
     });
     state.markActiveTaskStage("requesting");
-    const result = await codex.startTurn(inputs);
+    const result = await turnBackend.startTurn(inputs);
     const finalText = result.finalText || "Codex completed without a final text answer.";
     const deliveryFailures: string[] = [];
     await flushPreviewText(effectiveTask.id);
@@ -4526,7 +4651,9 @@ async function ensureWorker(): Promise<void> {
       const pendingCallHandoffs = state.getPendingCallHandoffCount();
       const holdReason = await effectiveQueueHoldReason();
       const firstPendingTask = state.nextPendingTask();
-      const nextPendingTask = !holdReason || taskCanBypassHoldToTerminal(firstPendingTask, holdReason)
+      const nextPendingTask = !holdReason
+        || taskCanBypassHoldToTerminal(firstPendingTask, holdReason)
+        || taskCanUseFallbackWhenHeld(firstPendingTask, holdReason)
         ? firstPendingTask
         : null;
       if (pendingCallHandoffs === 0 && !nextPendingTask) {
@@ -4545,7 +4672,11 @@ async function ensureWorker(): Promise<void> {
       }
       const lateHoldReason = await effectiveQueueHoldReason();
       const latePendingTask = state.nextPendingTask();
-      if (lateHoldReason && !taskCanBypassHoldToTerminal(latePendingTask, lateHoldReason)) {
+      if (
+        lateHoldReason
+        && !taskCanBypassHoldToTerminal(latePendingTask, lateHoldReason)
+        && !taskCanUseFallbackWhenHeld(latePendingTask, lateHoldReason)
+      ) {
         await waitForWorkerWake();
         continue;
       }
@@ -4663,6 +4794,55 @@ async function sendStatus(chatId: string): Promise<void> {
     lines.push(`Next step: ${blocker.nextStep}`);
   }
   await telegram.sendMessage(chatId, lines.join("\n"));
+}
+
+async function sendFallbackStatus(chatId: string): Promise<void> {
+  const fallbackStatus = fallbackCodex.getStatus();
+  const activeRecord = state.getActiveTask();
+  await telegram.sendMessage(chatId, [
+    "Fallback lane",
+    `Enabled: ${fallbackLaneEnabled() ? "yes" : "no"}`,
+    `Routing: ${config.bridge.fallback_lane?.routing ?? "when_desktop_busy_safe"}`,
+    `Ready: ${fallbackCodex.getThreadId() ? "yes" : "no"}`,
+    `Thread: ${fallbackCodex.getThreadId() ? `${fallbackCodex.getThreadId()!.slice(0, 12)}...` : "none"}`,
+    `CWD: ${(fallbackStatus.cwd ?? config.bridge.fallback_lane?.workdir ?? config.codex.workdir) || "(not configured)"}`,
+    `Workspace writes: ${config.bridge.fallback_lane?.allow_workspace_writes ? "allowed" : "disabled"}`,
+    `Active task: ${activeRecord && (activeRecord.lane ?? "primary") === "fallback" ? `${activeRecord.queueId} (${activeRecord.stage})` : "none"}`,
+  ].join("\n"));
+}
+
+async function handleFallbackCommand(chatId: string, args: string[]): Promise<void> {
+  const action = args[0] ?? "status";
+  switch (action) {
+    case "status":
+      await sendFallbackStatus(chatId);
+      return;
+    case "enable":
+      state.setSetting("bridge:fallback_lane_enabled_override", true);
+      wakeWorker();
+      await telegram.sendMessage(chatId, "Fallback lane enabled for safe desktop-busy tasks.");
+      return;
+    case "disable":
+      state.setSetting("bridge:fallback_lane_enabled_override", false);
+      await fallbackCodex.close().catch((error: unknown) => {
+        logger.warn("failed to close fallback lane during disable", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      await telegram.sendMessage(chatId, "Fallback lane disabled.");
+      return;
+    case "reset":
+      await fallbackCodex.close().catch((error: unknown) => {
+        logger.warn("failed to close fallback lane during reset", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      state.setSetting("codex:fallback_thread_id", null);
+      await telegram.sendMessage(chatId, "Fallback lane thread state reset. It will start fresh on the next eligible fallback task.");
+      return;
+    default:
+      await telegram.sendMessage(chatId, "Usage: /fallback [status|enable|disable|reset]");
+  }
 }
 
 async function sendWhere(chatId: string): Promise<void> {
@@ -5968,6 +6148,7 @@ async function handleCommand(message: TelegramMessage, text: string): Promise<bo
         "/call status",
         "/call enable",
         "/hangup",
+        "/fallback [status|enable|disable|reset]",
         "/terminal",
         "/terminal status",
         "/terminal init",
@@ -6125,6 +6306,9 @@ async function handleCommand(message: TelegramMessage, text: string): Promise<bo
       return true;
     case "/terminal":
       await handleTerminalCommand(chatId, parsed.args);
+      return true;
+    case "/fallback":
+      await handleFallbackCommand(chatId, parsed.args);
       return true;
     case "/image": {
       const prompt = parsed.args.join(" ").trim();
@@ -6407,6 +6591,39 @@ async function pollLoop(): Promise<void> {
   }
 }
 
+function registerCodexEventHandlers(backend: BridgeBackendManager, lane: BridgeLane): void {
+  backend.on("serverRequest", (request: JsonRpcRequest) => {
+    handleServerRequest(request as { id: string | number; method: string; params?: any }, backend, lane).catch((error: unknown) => {
+      logger.error("failed to handle server request", {
+        lane,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+  backend.on("turnStarted", (event: { turnId: string | null; threadId: string | null }) => {
+    const current = state.getActiveTask();
+    if (current && (current.lane ?? "primary") !== lane) {
+      return;
+    }
+    state.markActiveTaskSubmitted({
+      turnId: event.turnId,
+      threadId: event.threadId,
+    });
+    void syncActiveTaskSubmittedPlaceholder(backend.getMode()).catch((error: unknown) => {
+      logger.warn("failed to update submitted placeholder", {
+        lane,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+  backend.on("turnFinalText", (event: { text: string }) => {
+    if (!activeTask || (activeTask.task.lane ?? "primary") !== lane) {
+      return;
+    }
+    enqueuePreviewText(activeTask.task.id, activeTask.task.chatId, event.text);
+  });
+}
+
 async function main(): Promise<void> {
   ensureDir(config.storageRoot);
   await preparePersistentLog(join(config.storageRoot, "telegram-daemon.log"), "telegram-daemon");
@@ -6500,28 +6717,8 @@ async function main(): Promise<void> {
   });
 
   await runTelegramPreflight();
-  codex.on("serverRequest", (request: JsonRpcRequest) => {
-    handleServerRequest(request as { id: string | number; method: string; params?: any }).catch((error: unknown) => {
-      logger.error("failed to handle server request", { error: error instanceof Error ? error.message : String(error) });
-    });
-  });
-  codex.on("turnStarted", (event: { turnId: string | null; threadId: string | null }) => {
-    state.markActiveTaskSubmitted({
-      turnId: event.turnId,
-      threadId: event.threadId,
-    });
-    void syncActiveTaskSubmittedPlaceholder().catch((error: unknown) => {
-      logger.warn("failed to update submitted placeholder", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-  });
-  codex.on("turnFinalText", (event: { text: string }) => {
-    if (!activeTask) {
-      return;
-    }
-    enqueuePreviewText(activeTask.task.id, activeTask.task.chatId, event.text);
-  });
+  registerCodexEventHandlers(codex, "primary");
+  registerCodexEventHandlers(fallbackCodex, "fallback");
   await reconcileInterruptedWork(recoveredActiveTask);
   await codex.start();
   codex.onBackendUnavailable(event => {
@@ -6538,6 +6735,18 @@ async function main(): Promise<void> {
         return requestShutdown(`codex_backend_${event.reason}`);
       }
       return undefined;
+    });
+  });
+  fallbackCodex.onBackendUnavailable(event => {
+    logger.warn("fallback codex backend became unavailable", {
+      reason: event.reason,
+      detail: event.detail,
+    });
+    void fallbackCodex.sync(true).catch((error: unknown) => {
+      logger.warn("fallback codex backend recovery failed", {
+        reason: event.reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
     });
   });
   persistGatewayBridgeConnection(gatewayClient.isConnected());
@@ -6624,6 +6833,9 @@ main().catch(error => {
   });
   await codex.close().catch((error: unknown) => {
     logger.warn("failed to close codex backend manager", { error: error instanceof Error ? error.message : String(error) });
+  });
+  await fallbackCodex.close().catch((error: unknown) => {
+    logger.warn("failed to close fallback codex backend manager", { error: error instanceof Error ? error.message : String(error) });
   });
   await removePidFile(pidFilePath, process.pid).catch(error => {
     logger.warn("failed to remove pid file", { error: error instanceof Error ? error.message : String(error) });

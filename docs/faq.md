@@ -100,6 +100,10 @@ The base Telegram bridge is portable. It runs anywhere Node 22 and Codex Desktop
 
 Only if you want the optional terminal lane. The base Telegram bridge does not need `tmux`. The safe terminal lane starts as a bridge-owned tmux Codex worker with `gpt-5.5` low, read-only sandboxing, and never approvals, so `tmux` is the recommended first terminal backend. Telegram uses it only after `/terminal ask ...` or `/terminal chat on`.
 
+## Can it answer while my desktop Codex turn is already busy?
+
+Yes, but only through an explicit safe fallback lane. Enable `[bridge.fallback_lane]` or send `/fallback enable` after the base bridge works. The fallback lane uses a separate bridge-owned Codex thread for safe non-mutating tasks while the bound desktop turn is busy. It rejects workspace edits, secrets, terminal/desktop control, git operations, installs, and deploys unless you intentionally change the config tradeoff.
+
 ## What does `unlock terminal superpowers` do?
 
 It is a guided config step, not an automatic privilege escalation. Codex should explain the `[terminal_lane]` gates first. Bridge-owned write-capable tmux requires `terminal_lane.profile = "power-user"`, `terminal_lane.sandbox = "workspace-write"`, and `terminal_lane.approval_policy = "on-request"`. User-owned iTerm2, Terminal.app, or existing panes require `terminal_lane.allow_user_owned_sessions = true`.

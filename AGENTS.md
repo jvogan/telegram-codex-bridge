@@ -22,7 +22,22 @@ When a user asks for help setting up this repo, guide them through the real firs
 7. Use `bridge:claim` or `bridge:connect` only from the exact Codex Desktop session the user wants Telegram to inherit.
 8. Use `npm run start:telegram` and `npm run bridge:capabilities` to verify the base bridge before discussing optional features.
 9. Treat live `/call` as a second-stage enablement after the base bridge is working.
-10. Treat the terminal lane as experimental and gated. It is disabled by default and starts as bridge-owned tmux, `gpt-5.5` low, read-only, never-approval; if a user asks to "unlock terminal superpowers", explain the explicit `[terminal_lane]` settings rather than silently enabling broad powers.
+10. Treat the fallback lane as optional safe extra capacity. It is disabled by default and is for non-mutating work while the bound desktop turn is busy; do not present it as a lane for arbitrary repo edits.
+11. Treat the terminal lane as experimental and gated. It is disabled by default and starts as bridge-owned tmux, `gpt-5.5` low, read-only, never-approval; if a user asks to "unlock terminal superpowers", explain the explicit `[terminal_lane]` settings rather than silently enabling broad powers.
+
+## Fallback Lane Playbook For Codex
+
+Use this only after the base bridge works. The fallback lane is not the terminal lane: it starts a separate bridge-owned Codex app-server thread only for safe desktop-busy tasks.
+
+For the safe lane:
+
+1. Keep `bridge.fallback_lane.enabled = false` unless the user explicitly asks for extra safe capacity.
+2. Keep `bridge.fallback_lane.routing = "when_desktop_busy_safe"` and `bridge.fallback_lane.allow_workspace_writes = false`.
+3. Leave `bridge.fallback_lane.app_server_port` unset unless the default `codex.app_server_port + 1` conflicts.
+4. Use `/fallback status` to inspect it. Use `/fallback enable` only after explaining that it is for safe non-mutating work while the bound desktop session is busy.
+5. If it wedges, use `/fallback reset`; this clears only the fallback thread state.
+
+Do not route secrets, terminal/desktop control, git operations, installs, deploys, or workspace edits to the fallback lane. Those stay on the primary bridge path or the explicitly gated terminal lane.
 
 ## Terminal Lane Playbook For Codex
 

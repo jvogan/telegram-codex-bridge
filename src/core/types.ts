@@ -10,6 +10,8 @@ export type Modality = "asr" | "tts" | "image_generation";
 export const BRIDGE_MODES = ["autonomous-thread", "shared-thread-resume", "shadow-window"] as const;
 export const SHADOW_WINDOW_NOTICE = "shadow-window is experimental, macOS-only, and non-core.";
 export type BridgeMode = (typeof BRIDGE_MODES)[number];
+export type BridgeLane = "primary" | "fallback";
+export type FallbackLaneRouting = "when_desktop_busy_safe";
 export type TerminalLaneBackend = "auto" | "tmux" | "iterm2" | "terminal-app";
 export type TerminalLaneResolvedBackend = Exclude<TerminalLaneBackend, "auto">;
 export type TerminalLaneProfile = "public-safe" | "power-user";
@@ -95,6 +97,7 @@ export interface ImageGenerationInput extends ProviderSelection {
 
 export interface QueuedTelegramTask {
   id: string;
+  lane?: BridgeLane;
   updateId: number;
   chatId: string;
   messageId: number;
@@ -178,6 +181,7 @@ export interface ApprovalRecord {
 
 export interface ActiveTaskRecord {
   queueId: string;
+  lane?: BridgeLane;
   chatId: string;
   placeholderMessageId: number | null;
   startedAt: number;

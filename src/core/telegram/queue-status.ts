@@ -13,6 +13,8 @@ export function describeTelegramQueueHoldReason(reason: string | null): string |
       return "another reply is in progress";
     case "desktop_turn_unverified":
       return "the current reply status is settling";
+    case "fallback_unavailable":
+      return "the safe fallback lane is not ready";
     case "sleeping":
     case "owner:desktop":
       return "chat processing is paused";

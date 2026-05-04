@@ -22,6 +22,8 @@ Check these in order:
 
 `bridge:ctl -- terminal status` and Telegram `/terminal status` are the optional live terminal lane views. They show the configured backend, selected backend, lock state, sandbox/approval profile, user-owned-session gate, control gate, terminal chat mode, and attach command for tmux.
 
+Telegram `/fallback status` is the optional safe fallback lane view. It shows whether the separate bridge-owned Codex thread is enabled, ready, which thread it is using, its CWD, whether workspace writes are allowed, and whether a fallback task is active.
+
 Default logs are redacted. They should expose state transitions, ids, counts, ages, and blocker labels without dumping raw Telegram content, usernames, prompts, tokens, secrets, or client IPs.
 
 ## What The Status Commands Expose

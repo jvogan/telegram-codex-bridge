@@ -177,6 +177,17 @@ Treat `/call` as experimental. Only enable it after the base bridge is already w
 
 Full guide: [calling-openai-realtime.md](calling-openai-realtime.md)
 
+The optional fallback lane gives the bot safe extra capacity while the bound desktop turn is busy. It is disabled by default and is not for arbitrary repo edits:
+
+```toml
+[bridge.fallback_lane]
+enabled = true
+routing = "when_desktop_busy_safe"
+allow_workspace_writes = false
+```
+
+Use `/fallback status` to inspect it, `/fallback enable` to turn it on for this bridge state, and `/fallback reset` if the fallback thread needs to start fresh.
+
 The optional terminal lane is also experimental. It is disabled by default and starts as a bridge-owned read-only tmux Codex worker for explicit `/terminal` work:
 
 ```toml

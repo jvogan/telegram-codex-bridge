@@ -44,6 +44,10 @@ Help me enable the safe tmux terminal lane. Do not adopt any existing terminals.
 ```
 
 ```text
+Help me enable the safe fallback lane for non-mutating work while my desktop Codex turn is busy.
+```
+
+```text
 Unlock terminal superpowers in this repo. Explain the gates first and keep secrets out of chat.
 ```
 
@@ -58,7 +62,8 @@ When following this repo’s `AGENTS.md`, Codex should:
 5. tell you to run `bridge:claim` or `bridge:connect` only from the exact Codex Desktop session you want Telegram to inherit
 6. use `bridge:capabilities` as the authoritative readiness report
 7. treat live `/call` as optional second-stage setup
-8. treat the terminal lane as optional, experimental, and config-gated; safe tmux first, `/terminal chat on` only after explicit user intent, stronger powers only after explicit config changes
+8. treat the fallback lane as optional safe extra capacity for non-mutating desktop-busy work, not arbitrary repo edits
+9. treat the terminal lane as optional, experimental, and config-gated; safe tmux first, `/terminal chat on` only after explicit user intent, stronger powers only after explicit config changes
 
 For the base bridge, Codex should assume `TELEGRAM_BOT_TOKEN` is the only required secret unless the user explicitly asks for OpenAI-backed media or live `/call`.
 
@@ -98,6 +103,14 @@ That prompt matters because `bridge:claim` should be run from the exact Codex De
 ```text
 The base bridge works. Help me enable live /call and verify the gateway, secrets, and arm step.
 ```
+
+### Enable the safe fallback lane
+
+```text
+The base bridge works. Help me enable the safe fallback lane for non-mutating desktop-busy work.
+```
+
+Codex should set `bridge.fallback_lane.enabled = true`, keep `bridge.fallback_lane.allow_workspace_writes = false`, leave `bridge.fallback_lane.app_server_port` unset unless there is a conflict, and tell you to inspect with `/fallback status`. It should not describe the fallback lane as a place for arbitrary repo edits, secrets, terminal work, git operations, installs, or deploys.
 
 ### Enable the safe tmux terminal lane
 

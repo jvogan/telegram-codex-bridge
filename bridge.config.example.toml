@@ -21,6 +21,20 @@ mode = "shared-thread-resume"
 # 4. known platform-specific defaults such as the macOS Codex app bundle
 codex_binary = ""
 
+[bridge.fallback_lane]
+# Optional safe parallel lane. Disabled by default.
+# When enabled, the bridge may start a separate bridge-owned Codex app-server
+# thread only for safe non-mutating work while the bound desktop turn is busy.
+# Workspace edits, terminal/desktop control, secrets, git operations, installs,
+# and deploy/publish actions stay on the primary lane.
+enabled = false
+routing = "when_desktop_busy_safe"
+allow_workspace_writes = false
+# Defaults to codex.app_server_port + 1.
+# app_server_port = 8766
+# Optional. Defaults to codex.workdir.
+# workdir = ""
+
 [terminal_lane]
 # Experimental side lane. Disabled by default.
 # When enabled, bridge:capabilities reports the gates and bridgectl or /terminal

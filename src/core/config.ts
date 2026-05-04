@@ -12,6 +12,7 @@ import {
 import { missingBridgeConfigMessage, missingCodexBinaryMessage, missingTelegramBotTokenMessage } from "./onboarding-messages.js";
 import type {
   BridgeMode,
+  FallbackLaneRouting,
   MediaDefaults,
   ProviderFallbacks,
   ProviderId,
@@ -20,6 +21,7 @@ import type {
 } from "./types.js";
 
 const bridgeModeSchema = z.enum(BRIDGE_MODES);
+const fallbackLaneRoutingSchema = z.enum(["when_desktop_busy_safe"]);
 const asrProviderIdSchema = z.enum(PROVIDERS_BY_MODALITY.asr);
 const ttsProviderIdSchema = z.enum(PROVIDERS_BY_MODALITY.tts);
 const imageProviderIdSchema = z.enum(PROVIDERS_BY_MODALITY.image_generation);
@@ -63,6 +65,13 @@ const configSchema = z.object({
   bridge: z.object({
     mode: bridgeModeSchema.default("autonomous-thread"),
     codex_binary: z.string().default(""),
+    fallback_lane: z.object({
+      enabled: z.boolean().default(false),
+      routing: fallbackLaneRoutingSchema.default("when_desktop_busy_safe"),
+      allow_workspace_writes: z.boolean().default(false),
+      app_server_port: z.number().int().positive().optional(),
+      workdir: z.string().optional(),
+    }).optional(),
   }).default({
     mode: "autonomous-thread",
     codex_binary: "",
@@ -215,6 +224,14 @@ export type BridgeConfig = z.infer<typeof configSchema> & {
 
 export type BridgeBranding = z.infer<typeof brandingSchema>;
 
+export interface BridgeFallbackLaneConfig {
+  enabled: boolean;
+  routing: FallbackLaneRouting;
+  allow_workspace_writes: boolean;
+  app_server_port: number;
+  workdir?: string;
+}
+
 export interface BridgeEnv {
   telegramBotToken: string | null;
   openaiApiKey: string | null;
@@ -295,6 +312,18 @@ export function loadBridgeEnv(config: BridgeConfig): BridgeEnv {
 
 export function defaultBridgeMode(config: BridgeConfig): BridgeMode {
   return config.bridgeModeExplicit ? config.bridge.mode : "autonomous-thread";
+}
+
+export function resolveFallbackLaneConfig(config: BridgeConfig): BridgeFallbackLaneConfig {
+  const fallback = config.bridge.fallback_lane;
+  const workdir = fallback?.workdir?.trim();
+  return {
+    enabled: fallback?.enabled ?? false,
+    routing: fallback?.routing ?? "when_desktop_busy_safe",
+    allow_workspace_writes: fallback?.allow_workspace_writes ?? false,
+    app_server_port: fallback?.app_server_port ?? config.codex.app_server_port + 1,
+    ...(workdir ? { workdir } : {}),
+  };
 }
 
 function knownCodexBinaryDefaults(platformName: NodeJS.Platform): string[] {

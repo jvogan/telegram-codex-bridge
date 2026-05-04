@@ -75,10 +75,12 @@ import {
   sendTerminalCodexControl,
   setTerminalBackendOverride,
   setTerminalCodexIdentity,
+  startTerminalCodexAsk,
   startTerminalCodexWorker,
   stopTerminalCodexWorker,
   terminalAttachCommand,
   terminalCodexIdentity,
+  waitForTerminalCodexAskCompletion,
 } from "../core/terminal/codex-terminal.js";
 import { TelegramClient } from "../core/telegram/client.js";
 import { deliverAudioArtifacts } from "../core/telegram/audio-delivery.js";
@@ -164,7 +166,7 @@ function usageText(): string {
     "  bridgectl sleep",
     "  bridgectl wake",
     "  bridgectl capabilities",
-    "  bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|interrupt|clear|unlock-superpowers",
+    "  bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|unlock-superpowers",
     "  bridgectl call arm|start|invite [message...]|disarm|hangup|status",
     "  bridgectl send <path> [--caption text]",
     "  bridgectl cleanup [--days N] [--purge-delivered-artifacts]",
@@ -2325,6 +2327,32 @@ function resolveCurrentBinding(args: string[]): BoundThread {
   return locator.bindCurrent({ cwd });
 }
 
+function parseTerminalAskArgs(args: string[]): { prompt: string; timeoutMs: number } {
+  const promptParts: string[] = [];
+  let timeoutMs = 10 * 60_000;
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--timeout-ms") {
+      const value = args[index + 1];
+      if (!value || !/^\d+$/.test(value)) {
+        throw new Error("Usage: bridgectl terminal ask [--timeout-ms <ms>] <prompt>");
+      }
+      timeoutMs = Number(value);
+      index += 1;
+      continue;
+    }
+    promptParts.push(arg);
+  }
+  const prompt = promptParts.join(" ").trim();
+  if (!prompt) {
+    throw new Error("Usage: bridgectl terminal ask [--timeout-ms <ms>] <prompt>");
+  }
+  if (prompt.length > 4_000) {
+    throw new Error("Terminal prompt is too long. Keep it under 4000 characters.");
+  }
+  return { prompt, timeoutMs };
+}
+
 async function claimBinding(binding: BoundThread): Promise<void> {
   await ensureSafeMutationState();
   recordShutdownHint({
@@ -2461,6 +2489,32 @@ async function commandTerminal(args: string[]): Promise<void> {
       ].join("\n"));
       return;
     }
+    case "ask": {
+      const { prompt, timeoutMs } = parseTerminalAskArgs(args);
+      const started = await startTerminalCodexAsk(prompt, config, state);
+      console.log([
+        "terminalAskStarted=true",
+        `backend=${started.backend}`,
+        `session=${started.session.name}`,
+        `tty=${started.session.tty ?? "none"}`,
+        `pane=${started.session.paneId ?? "none"}`,
+        `marker=${started.marker}`,
+      ].join("\n"));
+      const result = await waitForTerminalCodexAskCompletion(started, config, state, {
+        timeoutMs,
+        pollIntervalMs: 1_000,
+      });
+      console.log([
+        `terminalAskObserved=${result.observed ? "true" : "false"}`,
+        `elapsedMs=${result.elapsedMs}`,
+        result.answerText ? "answer:" : null,
+        result.answerText ?? null,
+      ].filter(Boolean).join("\n"));
+      if (!result.observed) {
+        process.exitCode = 1;
+      }
+      return;
+    }
     case "interrupt":
     case "clear": {
       const session = await sendTerminalCodexControl(action, config, state);
@@ -2497,7 +2551,7 @@ async function commandTerminal(args: string[]): Promise<void> {
       ].join("\n"));
       return;
     default:
-      throw new Error("Usage: bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|interrupt|clear|unlock-superpowers");
+      throw new Error("Usage: bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|unlock-superpowers");
   }
 }
 

@@ -31,5 +31,9 @@ export function sideEffectfulSlashCommandCategory(command: string, args: string[
     const action = args[0]?.toLowerCase() ?? "status";
     return ["status"].includes(action) ? null : "command:/terminal";
   }
+  if (normalizedCommand === "/fallback") {
+    const action = args[0]?.toLowerCase() ?? "status";
+    return ["status"].includes(action) ? null : "command:/fallback";
+  }
   return SIDE_EFFECTFUL_SLASH_COMMANDS.has(normalizedCommand) ? `command:${normalizedCommand}` : null;
 }

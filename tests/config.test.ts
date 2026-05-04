@@ -13,6 +13,7 @@ import {
   requireCodexBinary,
   requireTelegramBotToken,
   resolveCodexBinary,
+  resolveFallbackLaneConfig,
 } from "../src/core/config.js";
 import { PROVIDERS_BY_MODALITY } from "../src/core/types.js";
 
@@ -143,6 +144,51 @@ enabled = true
 
     const config = loadConfig(configPath);
     expect(defaultBridgeMode(config)).toBe("shared-thread-resume");
+  });
+
+  test("resolves fallback lane defaults without treating a blank workdir as a path", () => {
+    const configPath = writeConfig(`
+[telegram]
+authorized_chat_id = "123"
+
+[bridge.fallback_lane]
+enabled = true
+workdir = ""
+
+[codex]
+workdir = "/tmp/workdir"
+app_server_port = 9101
+
+[storage]
+root = "./.bridge-data"
+
+[providers.defaults]
+asr = "openai"
+tts = "openai"
+image_generation = "openai"
+
+[providers.fallbacks]
+asr = ["openai"]
+tts = ["elevenlabs"]
+image_generation = ["google"]
+
+[providers.openai]
+enabled = true
+
+[providers.elevenlabs]
+enabled = true
+
+[providers.google]
+enabled = true
+`);
+
+    const config = loadConfig(configPath);
+    expect(resolveFallbackLaneConfig(config)).toEqual({
+      enabled: true,
+      routing: "when_desktop_busy_safe",
+      allow_workspace_writes: false,
+      app_server_port: 9102,
+    });
   });
 
   test("defaults storage retention to 14 days", () => {

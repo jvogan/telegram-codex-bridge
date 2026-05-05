@@ -50,6 +50,7 @@ export function createTestBridgeConfig(
       approval_policy: "never",
       model: "gpt-5.5",
       reasoning_effort: "low",
+      web_search: true,
       codex_profile: "",
       daemon_owned: true,
       allow_user_owned_sessions: false,

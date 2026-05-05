@@ -74,7 +74,7 @@ Experimental terminal path:
 - stronger terminal powers require explicit `[terminal_lane]` gates
 - iTerm2, Terminal.app, and existing pane adoption require `terminal_lane.allow_user_owned_sessions = true`
 - normal Telegram messages do not silently route to the terminal lane; `/terminal chat on` is explicit
-- terminal chat keeps native media, web-search, live-call, and desktop-control requests on the primary bridge path
+- terminal chat keeps native media, live-call, and desktop-control requests on the primary bridge path
 - `shadow-window` is macOS-only, experimental, and non-core
 
 Unsupported or not promised:

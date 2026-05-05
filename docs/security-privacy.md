@@ -73,7 +73,7 @@ The optional terminal lane is experimental and disabled by default. In the publi
 - power-user mode requires explicit `workspace-write` plus `on-request`
 - iTerm2, Terminal.app, and existing user panes require `terminal_lane.allow_user_owned_sessions = true`
 - interrupt/clear controls require `terminal_lane.allow_terminal_control = true`
-- no silent Telegram auto-routing; `/terminal chat on` is explicit and keeps native media, web-search, live-call, and desktop-control requests on the primary bridge path
+- no silent Telegram auto-routing; `/terminal chat on` is explicit and keeps native media, live-call, and desktop-control requests on the primary bridge path
 - no raw scrollback persistence in bridge state
 
 `npm run bridge:capabilities` shows the configured terminal gates without inspecting terminal scrollback. Use `npm run bridge:ctl -- terminal status` or Telegram `/terminal status` before and after local testing when you need live discovery.

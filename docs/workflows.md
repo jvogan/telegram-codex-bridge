@@ -122,11 +122,12 @@ Safe-lane posture:
 - `terminal_lane.approval_policy = "never"`
 - `terminal_lane.model = "gpt-5.5"`
 - `terminal_lane.reasoning_effort = "low"`
+- `terminal_lane.web_search = true`
 - `terminal_lane.daemon_owned = true`
 - `terminal_lane.allow_user_owned_sessions = false`
 - `terminal_lane.allow_terminal_control = false`
 
-Terminal chat mode routes normal text/document work to the verified lane, but native media, image generation, live calls, web-search requests, and desktop-control requests stay on the primary bridge path.
+Terminal chat mode routes normal text/document and safe web-research work to the verified lane, but native media, image generation, live calls, and desktop-control requests stay on the primary bridge path.
 
 Ask Codex for `unlock terminal superpowers in this repo` only when you deliberately want write-capable tmux or user-owned iTerm2, Terminal.app, or existing-pane adoption.
 

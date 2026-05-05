@@ -214,6 +214,7 @@ sandbox = "read-only"
 approval_policy = "never"
 model = "gpt-5.5"
 reasoning_effort = "low"
+web_search = true
 daemon_owned = true
 ```
 
@@ -238,9 +239,9 @@ After the daemon is running, Telegram can use the gated lane explicitly:
 /terminal chat off
 ```
 
-`/terminal ask` is a one-off read-only terminal request. `/terminal chat on` makes normal text and staged-document messages use the verified terminal lane, but native image generation, ASR/TTS, voice replies, `/call`, web search requests, and desktop-control requests stay on the primary bridge path so the bot does not lose its full Codex Desktop and media capabilities.
+`/terminal ask` is a one-off terminal request using the current terminal profile. `/terminal chat on` makes normal text, staged-document, and safe web-research messages use the verified terminal lane. Native image generation, ASR/TTS, voice replies, `/call`, and desktop-control requests stay on the primary bridge path so the bot keeps its full Codex Desktop and media capabilities.
 
-Users can opt into more power by editing `[terminal_lane]`. A bridge-owned write-capable tmux worker requires `profile = "power-user"`, `sandbox = "workspace-write"`, `approval_policy = "on-request"`, and `allow_terminal_control = true` if interrupt/clear controls are wanted. User-owned iTerm2, Terminal.app, or existing tmux sessions require `allow_user_owned_sessions = true`, then `npm run bridge:ctl -- terminal use iterm2|terminal-app|auto` and `npm run bridge:ctl -- terminal lock`.
+Users can opt into more power by editing `[terminal_lane]`. A bridge-owned write-capable tmux worker requires `profile = "power-user"`, `sandbox = "workspace-write"`, `approval_policy = "on-request"`, and `allow_terminal_control = true` if interrupt/clear controls are wanted. You can also start a bridge-owned worker with a one-off profile selection, for example `npm run bridge:ctl -- terminal init --profile power-user`. User-owned iTerm2, Terminal.app, or existing tmux sessions require `allow_user_owned_sessions = true`, then `npm run bridge:ctl -- terminal use iterm2|terminal-app|auto` and `npm run bridge:ctl -- terminal lock`.
 
 For guided setup, ask Codex: `unlock terminal superpowers in this repo`. Codex should explain and edit the config gates deliberately; it should not silently adopt terminals or raise privileges.
 
@@ -368,7 +369,7 @@ The bridge has two capability sources.
 | Bound desktop Codex session | Repo access, file access, local tools, web access, and the rest of the normal Codex Desktop capability surface |
 | Bridge-managed runtime | Telegram transport, queued work, staged attachments, ASR, TTS, image generation, generated file delivery, and live `/call` orchestration |
 | Optional fallback lane | Safe non-mutating work on a bridge-owned autonomous Codex thread while the bound desktop session is busy |
-| Optional terminal lane | Explicit `/terminal ask` and `/terminal chat on` routing for verified CLI/file/workspace work, with primary bridge fallback for native media, web, live-call, and desktop-control requests |
+| Optional terminal lane | Explicit `/terminal ask` and `/terminal chat on` routing for verified CLI/file/workspace and safe web-research work, with primary bridge fallback for native media, live-call, and desktop-control requests |
 
 Mode semantics:
 
@@ -437,7 +438,7 @@ If you want the workflow diagrams for “open the repo in Codex Desktop”, “t
 | `/fallback enable\|disable\|reset` | Enable, disable, or reset the safe fallback lane for desktop-busy tasks |
 | `/terminal status` | Inspect the optional gated terminal Codex lane |
 | `/terminal init` | Start the bridge-owned tmux worker when `terminal_lane.enabled = true` |
-| `/terminal ask <prompt>` | Send one read-only terminal Codex task |
+| `/terminal ask <prompt>` | Send one terminal Codex task using the current terminal profile |
 | `/terminal chat on\|off` | Explicitly route normal text/document messages to or from the verified terminal lane |
 | `/terminal ping` | Verify the terminal lane answers without using it for normal chat |
 | `/shutdown` | Stop the local Telegram bridge daemon |

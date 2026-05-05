@@ -95,6 +95,7 @@ import type {
   RealtimeCallSurfaceRecord,
   ShutdownHintRecord,
   TerminalLaneBackend,
+  TerminalLaneProfile,
 } from "../core/types.js";
 import { isProcessRunning, readPidFile, removePidFile, writePidFile } from "../core/util/pid.js";
 import { resolveAllowedInspectableFile } from "../core/util/path-policy.js";
@@ -142,6 +143,47 @@ interface DesktopTurnActivity {
   inspectionFailed: boolean;
 }
 
+interface TerminalCodexActiveTaskForCapabilities {
+  id: string;
+}
+
+interface TerminalCodexExternalActiveTask {
+  id: string;
+  source: string;
+  startedAt: number;
+}
+
+const TERMINAL_EXTERNAL_ACTIVE_TASK_KEY = "terminal:external_active_task";
+const TERMINAL_EXTERNAL_ACTIVE_TASK_STALE_MS = 15 * 60_000;
+
+function terminalExternalActiveTask(): TerminalCodexExternalActiveTask | null {
+  const task = state.getSetting<TerminalCodexExternalActiveTask | null>(TERMINAL_EXTERNAL_ACTIVE_TASK_KEY, null);
+  if (!task) {
+    return null;
+  }
+  if (Date.now() - task.startedAt > TERMINAL_EXTERNAL_ACTIVE_TASK_STALE_MS) {
+    state.setSetting<TerminalCodexExternalActiveTask | null>(TERMINAL_EXTERNAL_ACTIVE_TASK_KEY, null);
+    return null;
+  }
+  return task;
+}
+
+function setTerminalExternalActiveTask(task: TerminalCodexExternalActiveTask | null): void {
+  state.setSetting<TerminalCodexExternalActiveTask | null>(TERMINAL_EXTERNAL_ACTIVE_TASK_KEY, task);
+}
+
+function activeTerminalTaskId(): string | null {
+  const activeTask = state.getSetting<TerminalCodexActiveTaskForCapabilities | null>("terminal:active_task", null);
+  return activeTask?.id ?? terminalExternalActiveTask()?.id ?? null;
+}
+
+function assertTerminalLaneNotBusy(action: string): void {
+  const taskId = activeTerminalTaskId();
+  if (taskId) {
+    throw new Error(`Terminal lane is already busy with task ${taskId}; refusing to ${action}.`);
+  }
+}
+
 function shouldPrintUsageWithoutConfig(args: string[]): boolean {
   return args.length === 0 || args.includes("help") || args.includes("--help") || args.includes("-h");
 }
@@ -166,7 +208,7 @@ function usageText(): string {
     "  bridgectl sleep",
     "  bridgectl wake",
     "  bridgectl capabilities",
-    "  bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|unlock-superpowers",
+    "  bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|reset|unlock-superpowers",
     "  bridgectl call arm|start|invite [message...]|disarm|hangup|status",
     "  bridgectl send <path> [--caption text]",
     "  bridgectl cleanup [--days N] [--purge-delivered-artifacts]",
@@ -2357,6 +2399,20 @@ function parseTerminalAskArgs(args: string[]): { prompt: string; timeoutMs: numb
   return { prompt, timeoutMs };
 }
 
+function parseTerminalProfileArg(args: string[]): TerminalLaneProfile | undefined {
+  const explicitIndex = args.indexOf("--profile");
+  const profileArg = explicitIndex >= 0
+    ? args[explicitIndex + 1]
+    : args.find(arg => arg === "public-safe" || arg === "power-user");
+  if (profileArg === "public-safe" || profileArg === "power-user") {
+    return profileArg;
+  }
+  if (explicitIndex >= 0) {
+    throw new Error("Usage: bridgectl terminal init|start|restart [--profile public-safe|power-user]");
+  }
+  return undefined;
+}
+
 async function claimBinding(binding: BoundThread): Promise<void> {
   await ensureSafeMutationState();
   recordShutdownHint({
@@ -2397,6 +2453,9 @@ async function claimBinding(binding: BoundThread): Promise<void> {
 
 async function commandTerminal(args: string[]): Promise<void> {
   const action = args[0] ?? "status";
+  const profile = action === "init" || action === "start" || action === "restart"
+    ? parseTerminalProfileArg(args)
+    : undefined;
   switch (action) {
     case "status": {
       const status = await getTerminalCodexStatus(config, state);
@@ -2408,6 +2467,9 @@ async function commandTerminal(args: string[]): Promise<void> {
         `Profile: ${config.terminal_lane.profile}`,
         `Sandbox: ${config.terminal_lane.sandbox}`,
         `Approvals: ${config.terminal_lane.approval_policy}`,
+        `Model: ${config.terminal_lane.model || "default"}`,
+        `Reasoning: ${config.terminal_lane.reasoning_effort || "default"}`,
+        `Web search: ${config.terminal_lane.web_search !== false ? "enabled" : "disabled"}`,
         `User-owned sessions: ${config.terminal_lane.allow_user_owned_sessions ? "enabled" : "disabled"}`,
         `Terminal control: ${config.terminal_lane.allow_terminal_control ? "enabled" : "disabled"}`,
       ].join("\n"));
@@ -2421,6 +2483,7 @@ async function commandTerminal(args: string[]): Promise<void> {
       if ((backend === "iterm2" || backend === "terminal-app") && !config.terminal_lane.allow_user_owned_sessions) {
         throw new Error("User-owned terminal backends are gated. Set terminal_lane.allow_user_owned_sessions = true first.");
       }
+      assertTerminalLaneNotBusy("switch terminal backend");
       setTerminalBackendOverride(state, backend);
       setTerminalCodexIdentity(state, null);
       console.log(`terminalBackend=${backend}`);
@@ -2428,7 +2491,8 @@ async function commandTerminal(args: string[]): Promise<void> {
     }
     case "init":
     case "start": {
-      const identity = await startTerminalCodexWorker(config, state);
+      assertTerminalLaneNotBusy("start another worker");
+      const identity = await startTerminalCodexWorker(config, state, profile ? { profile } : {});
       console.log([
         action === "init" ? "terminalInitialized=true" : "terminalStarted=true",
         `backend=${identity.backend}`,
@@ -2438,19 +2502,24 @@ async function commandTerminal(args: string[]): Promise<void> {
         `profile=${identity.profile ?? config.terminal_lane.profile}`,
         `sandbox=${identity.sandbox ?? config.terminal_lane.sandbox}`,
         `approvalPolicy=${identity.approvalPolicy ?? config.terminal_lane.approval_policy}`,
+        `model=${identity.model ?? config.terminal_lane.model ?? "default"}`,
+        `reasoningEffort=${identity.reasoningEffort ?? config.terminal_lane.reasoning_effort ?? "default"}`,
+        `webSearch=${identity.webSearch ? "true" : "false"}`,
         `daemonOwned=${identity.daemonOwned ? "true" : "false"}`,
         `attachCommand=${terminalAttachCommand(identity.name)}`,
       ].join("\n"));
       return;
     }
     case "stop": {
+      assertTerminalLaneNotBusy("stop the worker");
       const stopped = await stopTerminalCodexWorker(config, state);
       console.log(`terminalStopped=${stopped ? "true" : "false"}`);
       return;
     }
     case "restart": {
+      assertTerminalLaneNotBusy("restart the worker");
       await stopTerminalCodexWorker(config, state);
-      const identity = await startTerminalCodexWorker(config, state);
+      const identity = await startTerminalCodexWorker(config, state, profile ? { profile } : {});
       console.log([
         "terminalRestarted=true",
         `backend=${identity.backend}`,
@@ -2460,11 +2529,15 @@ async function commandTerminal(args: string[]): Promise<void> {
         `profile=${identity.profile ?? config.terminal_lane.profile}`,
         `sandbox=${identity.sandbox ?? config.terminal_lane.sandbox}`,
         `approvalPolicy=${identity.approvalPolicy ?? config.terminal_lane.approval_policy}`,
+        `model=${identity.model ?? config.terminal_lane.model ?? "default"}`,
+        `reasoningEffort=${identity.reasoningEffort ?? config.terminal_lane.reasoning_effort ?? "default"}`,
+        `webSearch=${identity.webSearch ? "true" : "false"}`,
         `attachCommand=${terminalAttachCommand(identity.name)}`,
       ].join("\n"));
       return;
     }
     case "lock": {
+      assertTerminalLaneNotBusy("lock a terminal lane");
       const identity = await lockTerminalCodexIdentity(config, state);
       console.log([
         "terminalLocked=true",
@@ -2476,11 +2549,14 @@ async function commandTerminal(args: string[]): Promise<void> {
       ].join("\n"));
       return;
     }
-    case "unlock":
+    case "unlock": {
+      assertTerminalLaneNotBusy("unlock the terminal lane");
       setTerminalCodexIdentity(state, null);
       console.log("terminalLocked=false");
       return;
+    }
     case "ping": {
+      assertTerminalLaneNotBusy("ping the terminal lane");
       const result = await pingTerminalCodex(config, state, { timeoutMs: 90_000, pollIntervalMs: 1_000 });
       console.log([
         `terminalPingObserved=${result.observed ? "true" : "false"}`,
@@ -2491,39 +2567,93 @@ async function commandTerminal(args: string[]): Promise<void> {
         `marker=${result.marker}`,
         `elapsedMs=${result.elapsedMs}`,
       ].join("\n"));
-      return;
-    }
-    case "ask": {
-      const { prompt, timeoutMs } = parseTerminalAskArgs(args);
-      const started = await startTerminalCodexAsk(prompt, config, state);
-      console.log([
-        "terminalAskStarted=true",
-        `backend=${started.backend}`,
-        `session=${started.session.name}`,
-        `tty=${started.session.tty ?? "none"}`,
-        `pane=${started.session.paneId ?? "none"}`,
-        `marker=${started.marker}`,
-      ].join("\n"));
-      const result = await waitForTerminalCodexAskCompletion(started, config, state, {
-        timeoutMs,
-        pollIntervalMs: 1_000,
-      });
-      console.log([
-        `terminalAskObserved=${result.observed ? "true" : "false"}`,
-        `elapsedMs=${result.elapsedMs}`,
-        result.answerText ? "answer:" : null,
-        result.answerText ?? null,
-      ].filter(Boolean).join("\n"));
       if (!result.observed) {
+        setTerminalExternalActiveTask({
+          id: `bridgectl-ping-timeout:${Date.now()}`,
+          source: "bridgectl terminal ping timed out; inspect or interrupt before sending more terminal work",
+          startedAt: Date.now(),
+        });
         process.exitCode = 1;
       }
       return;
     }
-    case "interrupt":
-    case "clear": {
-      const session = await sendTerminalCodexControl(action, config, state);
+    case "ask": {
+      const { prompt, timeoutMs } = parseTerminalAskArgs(args);
+      assertTerminalLaneNotBusy("start another terminal ask");
+      const taskId = `bridgectl-${Date.now()}`;
+      let keepExternalBusy = false;
+      setTerminalExternalActiveTask({
+        id: taskId,
+        source: "bridgectl terminal ask",
+        startedAt: Date.now(),
+      });
+      try {
+        const started = await startTerminalCodexAsk(prompt, config, state);
+        console.log([
+          "terminalAskStarted=true",
+          `backend=${started.backend}`,
+          `session=${started.session.name}`,
+          `tty=${started.session.tty ?? "none"}`,
+          `pane=${started.session.paneId ?? "none"}`,
+          `marker=${started.marker}`,
+        ].join("\n"));
+        const result = await waitForTerminalCodexAskCompletion(started, config, state, {
+          timeoutMs,
+          pollIntervalMs: 1_000,
+        });
+        console.log([
+          `terminalAskObserved=${result.observed ? "true" : "false"}`,
+          `elapsedMs=${result.elapsedMs}`,
+          result.answerText ? "answer:" : null,
+          result.answerText ?? null,
+        ].filter(Boolean).join("\n"));
+        if (!result.observed) {
+          keepExternalBusy = true;
+          setTerminalExternalActiveTask({
+            id: `${taskId}:timeout`,
+            source: "bridgectl terminal ask timed out; inspect or interrupt before sending more terminal work",
+            startedAt: Date.now(),
+          });
+          process.exitCode = 1;
+        }
+      } finally {
+        if (!keepExternalBusy) {
+          setTerminalExternalActiveTask(null);
+        }
+      }
+      return;
+    }
+    case "interrupt": {
+      const session = await sendTerminalCodexControl("interrupt", config, state);
+      state.setSetting("terminal:active_task", null);
+      setTerminalExternalActiveTask(null);
       console.log([
-        `terminalControl=${action}`,
+        "terminalInterrupted=true",
+        `backend=${session.backend}`,
+        `session=${session.name}`,
+        `tty=${session.tty ?? "none"}`,
+        `pane=${session.paneId ?? "none"}`,
+      ].join("\n"));
+      return;
+    }
+    case "clear": {
+      assertTerminalLaneNotBusy("clear the terminal lane");
+      const session = await sendTerminalCodexControl("clear", config, state);
+      console.log([
+        "terminalCleared=true",
+        `backend=${session.backend}`,
+        `session=${session.name}`,
+        `tty=${session.tty ?? "none"}`,
+        `pane=${session.paneId ?? "none"}`,
+      ].join("\n"));
+      return;
+    }
+    case "reset": {
+      const session = await sendTerminalCodexControl("interrupt", config, state);
+      state.setSetting("terminal:active_task", null);
+      setTerminalExternalActiveTask(null);
+      console.log([
+        "terminalReset=true",
         `backend=${session.backend}`,
         `session=${session.name}`,
         `tty=${session.tty ?? "none"}`,
@@ -2542,6 +2672,7 @@ async function commandTerminal(args: string[]): Promise<void> {
         "profile = \"power-user\"",
         "sandbox = \"workspace-write\"",
         "approval_policy = \"on-request\"",
+        "web_search = true",
         "daemon_owned = true",
         "allow_terminal_control = true",
         "",
@@ -2551,11 +2682,12 @@ async function commandTerminal(args: string[]): Promise<void> {
         "backend = \"iterm2\" # or \"terminal-app\" or \"auto\"",
         "daemon_owned = false",
         "",
-        "Then run: npm run bridge:ctl -- terminal status && npm run bridge:ctl -- terminal lock",
+        "Then run: npm run bridge:ctl -- terminal init --profile power-user",
+        "For user-owned sessions, run: npm run bridge:ctl -- terminal status && npm run bridge:ctl -- terminal lock",
       ].join("\n"));
       return;
     default:
-      throw new Error("Usage: bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|unlock-superpowers");
+      throw new Error("Usage: bridgectl terminal status|use|init|start|stop|restart|lock|unlock|ping|ask|interrupt|clear|reset|unlock-superpowers");
   }
 }
 

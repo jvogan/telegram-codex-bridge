@@ -8,7 +8,7 @@ The answer is that Telegram does not own those abilities directly. The bridge bi
 
 - The bound desktop Codex session supplies repo access, file access, local tools, and web access.
 - The bridge runtime supplies Telegram transport, staged attachments, media providers, generated artifact delivery, and live `/call`.
-- The optional terminal lane is explicit in the public repo; it does not replace the bound desktop thread. `/terminal ask` and `/terminal chat on` can use a verified lane for text/document work, while native media, web-search, live-call, and desktop-control requests stay on the primary bridge path. Stronger terminal powers are config-gated.
+- The optional terminal lane is explicit in the public repo; it does not replace the bound desktop thread. `/terminal ask` and `/terminal chat on` can use a verified lane for text/document and safe web-research work, while native media, live-call, and desktop-control requests stay on the primary bridge path. Stronger terminal powers are config-gated.
 - `bridge:capabilities` is the authoritative report for what is ready right now, including bot-token presence, authorized chat, daemon state, desktop binding, optional provider readiness, live-call readiness, and terminal-lane gates.
 
 ## Talking To Codex Through Telegram

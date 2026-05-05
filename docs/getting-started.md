@@ -209,7 +209,7 @@ tmux attach -t telegram-codex-bridge-terminal
 npm run bridge:ctl -- terminal status
 ```
 
-It does not route normal Telegram messages until the user explicitly sends `/terminal chat on`. In chat mode, normal text/document work can use the terminal lane, while image generation, voice/ASR/TTS, live calls, web-search requests, and desktop-control requests stay on the primary bridge path. `bridge:capabilities` reports the config gates; `bridge:ctl -- terminal status` and `/terminal status` inspect the live terminal lane.
+It does not route normal Telegram messages until the user explicitly sends `/terminal chat on`. In chat mode, normal text/document and safe web-research work can use the terminal lane, while image generation, voice/ASR/TTS, live calls, and desktop-control requests stay on the primary bridge path. `bridge:capabilities` reports the config gates; `bridge:ctl -- terminal status` and `/terminal status` inspect the live terminal lane.
 
 If you want stronger terminal powers, ask Codex to `unlock terminal superpowers in this repo` or run:
 

@@ -17,6 +17,7 @@ export type TerminalLaneResolvedBackend = Exclude<TerminalLaneBackend, "auto">;
 export type TerminalLaneProfile = "public-safe" | "power-user";
 export type TerminalLaneSandbox = "read-only" | "workspace-write";
 export type TerminalLaneApprovalPolicy = "never" | "on-request";
+export type TerminalLaneReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type BridgeOwner = "telegram" | "desktop" | "none";
 export type RealtimeSurfaceMode = "manual-arm";
 export type RealtimeTunnelMode = "managed-quick-cloudflared" | "static-public-url";

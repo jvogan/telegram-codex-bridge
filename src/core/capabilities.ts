@@ -192,7 +192,7 @@ function operatorTerminalLaneLines(config: BridgeConfig, state: BridgeState): st
   return [
     "Optional terminal lane",
     `Terminal lane: ${terminalLaneState} (profile=${lane.profile}, sandbox=${lane.sandbox}, approvals=${lane.approval_policy})`,
-    `Terminal model: ${lane.model?.trim() || config.codex.model.trim() || "default"}${lane.reasoning_effort ? ` (${lane.reasoning_effort} reasoning)` : ""}; web search enabled at launch`,
+    `Terminal model: ${lane.model?.trim() || config.codex.model.trim() || "default"}${lane.reasoning_effort ? ` (${lane.reasoning_effort} reasoning)` : ""}; web search ${lane.web_search !== false ? "enabled" : "disabled"} at launch`,
     `Selected terminal backend: ${selectedDetail}; locked session: ${lockedState}`,
     safeTmuxLine,
     superpowersLine,

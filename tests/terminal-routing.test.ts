@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildTerminalConversationPromptForText,
+  buildTerminalConversationPromptForTask,
+  buildTerminalExplicitPromptForText,
   buildTerminalPromptForTask,
   buildTerminalPromptForText,
   isTerminalHardBlockedRequest,
@@ -9,6 +11,8 @@ import {
   isTerminalWorkspaceMutationRequest,
   selectTerminalRouteForTask,
   terminalConversationBlocker,
+  terminalExplicitAskBlocker,
+  terminalRequestTextForTask,
   terminalRouteCanBypassHold,
 } from "../src/core/telegram/terminal-routing.js";
 import type { QueuedTelegramTask } from "../src/core/types.js";
@@ -34,6 +38,19 @@ function documentTask(text: string): QueuedTelegramTask {
     documentMimeType: "application/pdf",
     documentPath: "/tmp/telegram-codex-bridge/paper.pdf",
   };
+}
+
+function voiceTask(transcriptText?: string, text = "(voice message)"): QueuedTelegramTask {
+  const task: QueuedTelegramTask = {
+    ...textTask(text),
+    kind: "voice",
+    mediaFileId: "voice-1",
+    mediaMimeType: "audio/ogg",
+  };
+  if (transcriptText !== undefined) {
+    task.transcriptText = transcriptText;
+  }
+  return task;
 }
 
 describe("terminal routing", () => {
@@ -80,7 +97,6 @@ describe("terminal routing", () => {
       reason: "terminal_chat_primary_bridge_request",
     });
     for (const text of [
-      "search the web for a related paper",
       "reply with a voice update",
       "transcribe this voice note",
       "open the browser on desktop",
@@ -93,6 +109,66 @@ describe("terminal routing", () => {
         reason: "terminal_chat_primary_bridge_request",
       });
     }
+    expect(selectTerminalRouteForTask(textTask("search the web for a related paper"), {
+      desktopBusy: false,
+      terminalConversationMode: true,
+    })).toEqual({
+      route: "terminal",
+      reason: "terminal_chat_mode",
+    });
+  });
+
+  test("terminal chat mode routes transcribed voice like normal text", () => {
+    expect(selectTerminalRouteForTask(voiceTask(undefined), {
+      desktopBusy: false,
+      terminalConversationMode: true,
+    })).toEqual({
+      route: "primary",
+      reason: "desktop_not_busy",
+    });
+    expect(selectTerminalRouteForTask(voiceTask("What failed, the audio or something else?"), {
+      desktopBusy: false,
+      terminalConversationMode: true,
+    })).toEqual({
+      route: "terminal",
+      reason: "terminal_chat_mode",
+    });
+    expect(selectTerminalRouteForTask(voiceTask("Use the native image generation tool and generate it again."), {
+      desktopBusy: false,
+      terminalConversationMode: true,
+    })).toEqual({
+      route: "primary",
+      reason: "terminal_chat_primary_bridge_request",
+    });
+  });
+
+  test("terminal prompts use the transcript instead of the Telegram voice placeholder", () => {
+    const task = voiceTask("List the top-level files and do not edit files.");
+    expect(terminalRequestTextForTask(task)).toBe("List the top-level files and do not edit files.");
+    const prompt = buildTerminalConversationPromptForTask(task, { allowWorkspaceWrites: true });
+    expect(prompt).toContain("User request: List the top-level files and do not edit files.");
+    expect(prompt).not.toContain("User request: (voice message)");
+  });
+
+  test("routes safe web and paper research to terminal when desktop is busy", () => {
+    expect(selectTerminalRouteForTask(textTask("search the web for a recent paper on terminal lanes"), {
+      desktopBusy: true,
+    })).toEqual({
+      route: "terminal",
+      reason: "readonly_local_or_repo_request_desktop_busy",
+    });
+    expect(selectTerminalRouteForTask(textTask("find a source online about codex terminal lanes"), {
+      desktopBusy: true,
+    })).toEqual({
+      route: "terminal",
+      reason: "readonly_local_or_repo_request_desktop_busy",
+    });
+    expect(selectTerminalRouteForTask(textTask("show figure 1 from the newest paper in Downloads"), {
+      desktopBusy: true,
+    })).toEqual({
+      route: "primary",
+      reason: "primary_bridge_request",
+    });
   });
 
   test("terminal chat mode distinguishes workspace writes from hard blocks", () => {
@@ -101,8 +177,22 @@ describe("terminal routing", () => {
     expect(terminalConversationBlocker("fix the bug in the repo", { allowWorkspaceWrites: true })).toBeNull();
     expect(isTerminalHardBlockedRequest("deploy this and print my API key")).toBe(true);
     expect(isTerminalHardBlockedRequest("pull together a summary of the repo")).toBe(false);
+    expect(isTerminalUnsafeRequest("draw conclusions from this paper")).toBe(false);
+    expect(isTerminalUnsafeRequest("draw a diagram of the bridge")).toBe(true);
     expect(terminalConversationBlocker("deploy this and print my API key", { allowWorkspaceWrites: true })).toContain("blocks");
-    expect(terminalConversationBlocker("reply with an audio update", { allowWorkspaceWrites: true })).toContain("bound desktop bridge path");
+    expect(terminalConversationBlocker("make an image of a terminal lane", { allowWorkspaceWrites: true })).toContain("bound desktop bridge path");
+  });
+
+  test("explicit terminal asks honor power-user workspace writes without allowing hard blocks", () => {
+    expect(terminalExplicitAskBlocker("fix the typo in README", { allowWorkspaceWrites: false })).toContain("read-only");
+    expect(terminalExplicitAskBlocker("fix the typo in README", { allowWorkspaceWrites: true })).toBeNull();
+    expect(terminalExplicitAskBlocker("deploy this branch", { allowWorkspaceWrites: true })).toContain("blocks");
+    expect(terminalExplicitAskBlocker("make an image of a bridge", { allowWorkspaceWrites: true })).toContain("bound desktop bridge path");
+
+    const powerPrompt = buildTerminalExplicitPromptForText("fix the typo in README", { allowWorkspaceWrites: true });
+    expect(powerPrompt).toContain("explicit terminal Codex lane task");
+    expect(powerPrompt).toContain("workspace-write sandbox");
+    expect(powerPrompt).toContain("User request: fix the typo in README");
   });
 
   test("routes staged documents to terminal only for read-only handling", () => {

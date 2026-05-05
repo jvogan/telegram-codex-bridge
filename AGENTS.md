@@ -56,7 +56,7 @@ For stronger powers, explain the tradeoff first and make the config change expli
 
 - bridge-owned write-capable tmux: `terminal_lane.profile = "power-user"`, `terminal_lane.sandbox = "workspace-write"`, `terminal_lane.approval_policy = "on-request"`, and optionally `terminal_lane.allow_terminal_control = true`
 - user-owned iTerm2, Terminal.app, or existing tmux panes: `terminal_lane.allow_user_owned_sessions = true`, `terminal_lane.daemon_owned = false`, then use `npm run bridge:ctl -- terminal use ...` and `npm run bridge:ctl -- terminal lock`
-- terminal chat mode routes normal text/document work to terminal, but image generation, ASR/TTS, voice replies, live calls, web-search requests, and desktop-control requests should remain on the primary bridge path
+- terminal chat mode routes normal text/document and safe web-research work to terminal when enabled; image generation, ASR/TTS, voice replies, live calls, and desktop-control requests should remain on the primary bridge path
 - never use `danger-full-access` as part of the public terminal lane guidance
 - never claim, clear, interrupt, or stop a user-owned terminal unless the gate is enabled and the user asked for that action
 

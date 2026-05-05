@@ -77,6 +77,9 @@ describe("terminal Codex shared helpers", () => {
     expect(plan.args).toContain("--model");
     expect(plan.args).toContain("gpt-5.5");
     expect(plan.args).toContain("model_reasoning_effort=\"low\"");
+    expect(plan.model).toBe("gpt-5.5");
+    expect(plan.reasoningEffort).toBe("low");
+    expect(plan.webSearch).toBe(true);
     expect(plan.args).toContain("--search");
     expect(plan.args).toContain("--profile");
     expect(plan.args).toContain("bridge-terminal");
@@ -102,6 +105,37 @@ describe("terminal Codex shared helpers", () => {
     expect(plan.args).toContain("workspace-write");
     expect(plan.args).toContain("on-request");
     expect(plan.args).not.toContain("danger-full-access");
+  });
+
+  test("can explicitly disable terminal lane web search", () => {
+    const root = tempRoot();
+    const config = createTestBridgeConfig(root, {
+      terminal_lane: {
+        web_search: false,
+      },
+    });
+    const plan = buildTerminalCodexLaunchPlan(config);
+
+    expect(plan.webSearch).toBe(false);
+    expect(plan.args).not.toContain("--search");
+  });
+
+  test("can launch a one-off public-safe profile from a stronger config", () => {
+    const root = tempRoot();
+    const config = createTestBridgeConfig(root, {
+      terminal_lane: {
+        profile: "power-user",
+        sandbox: "workspace-write",
+        approval_policy: "on-request",
+      },
+    });
+    const plan = buildTerminalCodexLaunchPlan(config, { profile: "public-safe" });
+
+    expect(plan.profile).toBe("public-safe");
+    expect(plan.sandbox).toBe("read-only");
+    expect(plan.approvalPolicy).toBe("never");
+    expect(plan.args).toContain("read-only");
+    expect(plan.args).toContain("never");
   });
 
   test("persisted terminal task metadata stores hashes instead of scrollback", () => {

@@ -8,6 +8,7 @@ import type {
   TerminalLaneApprovalPolicy,
   TerminalLaneBackend,
   TerminalLaneProfile,
+  TerminalLaneReasoningEffort,
   TerminalLaneResolvedBackend,
   TerminalLaneSandbox,
 } from "../types.js";
@@ -40,6 +41,9 @@ import {
 
 export const TERMINAL_CODEX_IDENTITY_KEY = "terminal:codex_identity";
 export const TERMINAL_BACKEND_OVERRIDE_KEY = "terminal:backend_override";
+const TERMINAL_WORKER_START_READY_TIMEOUT_MS = 60_000;
+const TERMINAL_WORKER_START_POLL_MS = 500;
+const TERMINAL_WORKER_START_READY_STABLE_MS = 2_000;
 
 export interface TerminalCodexIdentity {
   backend: TerminalLaneResolvedBackend;
@@ -52,6 +56,9 @@ export interface TerminalCodexIdentity {
   profile: TerminalLaneProfile | null;
   sandbox: TerminalLaneSandbox | null;
   approvalPolicy: TerminalLaneApprovalPolicy | null;
+  model: string | null;
+  reasoningEffort: TerminalLaneReasoningEffort | null;
+  webSearch: boolean;
   launcherPath: string | null;
   launchArgsHash: string | null;
   ownerNonce: string | null;
@@ -113,6 +120,8 @@ export interface TerminalCodexLaunchPlan {
   sandbox: TerminalLaneSandbox;
   approvalPolicy: TerminalLaneApprovalPolicy;
   model: string | null;
+  reasoningEffort: TerminalLaneReasoningEffort | null;
+  webSearch: boolean;
   codexProfile: string | null;
   launcherPath: string;
   launcherCommand: string;
@@ -146,6 +155,12 @@ function terminalCodexCommand(config: BridgeConfig): string {
   return config.terminal_lane.codex_command.trim() || resolveCodexBinary(config) || "codex";
 }
 
+function terminalProfileDefaults(profile: TerminalLaneProfile): { sandbox: TerminalLaneSandbox; approvalPolicy: TerminalLaneApprovalPolicy } {
+  return profile === "public-safe"
+    ? { sandbox: "read-only", approvalPolicy: "never" }
+    : { sandbox: "workspace-write", approvalPolicy: "on-request" };
+}
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -158,11 +173,16 @@ export function terminalAttachCommand(sessionName: string): string {
   return `tmux attach -t ${sessionName}`;
 }
 
-export function buildTerminalCodexLaunchPlan(config: BridgeConfig): TerminalCodexLaunchPlan {
-  const profile = config.terminal_lane.profile;
-  const sandbox = config.terminal_lane.sandbox;
-  const approvalPolicy = config.terminal_lane.approval_policy;
+export function buildTerminalCodexLaunchPlan(
+  config: BridgeConfig,
+  options: { profile?: TerminalLaneProfile } = {},
+): TerminalCodexLaunchPlan {
+  const profile = options.profile ?? config.terminal_lane.profile;
+  const defaults = terminalProfileDefaults(profile);
+  const sandbox = options.profile ? defaults.sandbox : config.terminal_lane.sandbox;
+  const approvalPolicy = options.profile ? defaults.approvalPolicy : config.terminal_lane.approval_policy;
   const cwd = terminalWorkdir(config);
+  const webSearch = config.terminal_lane.web_search !== false;
   const args = [
     "-c",
     "check_for_update_on_startup=false",
@@ -172,13 +192,15 @@ export function buildTerminalCodexLaunchPlan(config: BridgeConfig): TerminalCode
     sandbox,
     "--ask-for-approval",
     approvalPolicy,
-    "--search",
   ];
+  if (webSearch) {
+    args.push("--search");
+  }
   const model = config.terminal_lane.model?.trim() || config.codex.model.trim() || undefined;
   if (model) {
     args.push("--model", model);
   }
-  const reasoningEffort = config.terminal_lane.reasoning_effort?.trim();
+  const reasoningEffort = config.terminal_lane.reasoning_effort?.trim() as TerminalLaneReasoningEffort | undefined;
   if (reasoningEffort) {
     args.push("-c", `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`);
   }
@@ -208,6 +230,8 @@ export function buildTerminalCodexLaunchPlan(config: BridgeConfig): TerminalCode
     sandbox,
     approvalPolicy,
     model: model ?? null,
+    reasoningEffort: reasoningEffort ?? null,
+    webSearch,
     codexProfile: codexProfile ?? null,
     launcherPath,
     launcherCommand: `/bin/sh ${shellQuote(launcherPath)}`,
@@ -261,6 +285,11 @@ export function terminalCodexIdentity(state: BridgeState): TerminalCodexIdentity
     profile: raw.profile === "public-safe" || raw.profile === "power-user" ? raw.profile : null,
     sandbox: raw.sandbox === "read-only" || raw.sandbox === "workspace-write" ? raw.sandbox : null,
     approvalPolicy: raw.approvalPolicy === "never" || raw.approvalPolicy === "on-request" ? raw.approvalPolicy : null,
+    model: typeof raw.model === "string" ? raw.model : null,
+    reasoningEffort: raw.reasoningEffort === "low" || raw.reasoningEffort === "medium" || raw.reasoningEffort === "high" || raw.reasoningEffort === "xhigh"
+      ? raw.reasoningEffort
+      : null,
+    webSearch: raw.webSearch ?? true,
     launcherPath: raw.launcherPath ?? null,
     launchArgsHash: raw.launchArgsHash ?? null,
     ownerNonce: raw.ownerNonce ?? null,
@@ -506,6 +535,9 @@ export async function lockTerminalCodexIdentity(config: BridgeConfig, state: Bri
     profile: null,
     sandbox: null,
     approvalPolicy: null,
+    model: null,
+    reasoningEffort: null,
+    webSearch: config.terminal_lane.web_search !== false,
     launcherPath: null,
     launchArgsHash: null,
     ownerNonce: null,
@@ -539,9 +571,33 @@ export async function ensureTerminalCodexIdentity(config: BridgeConfig, state: B
   return await lockTerminalCodexIdentity(config, state);
 }
 
+async function waitForTmuxTerminalReady(
+  config: BridgeConfig,
+  state: BridgeState,
+  options: { unlocked?: boolean } = {},
+): Promise<TerminalCodexStatus> {
+  const deadline = Date.now() + TERMINAL_WORKER_START_READY_TIMEOUT_MS;
+  let readySince: number | null = null;
+  let status = await getStatusForBackend(config, state, "tmux", options);
+  while (Date.now() < deadline) {
+    if (status.session && status.ready) {
+      readySince ??= Date.now();
+      if (Date.now() - readySince >= TERMINAL_WORKER_START_READY_STABLE_MS) {
+        return status;
+      }
+    } else {
+      readySince = null;
+    }
+    await new Promise(resolve => setTimeout(resolve, TERMINAL_WORKER_START_POLL_MS));
+    status = await getStatusForBackend(config, state, "tmux", options);
+  }
+  return status;
+}
+
 export async function startTerminalCodexWorker(
   config: BridgeConfig,
   state: BridgeState,
+  options: { profile?: TerminalLaneProfile } = {},
 ): Promise<TerminalCodexIdentity> {
   if (!config.terminal_lane.enabled) {
     throw new Error("Terminal lane is disabled in bridge.config.toml.");
@@ -564,13 +620,24 @@ export async function startTerminalCodexWorker(
       && existingIdentity.ownerNonce
       && ownerNonce === existingIdentity.ownerNonce
     ) {
+      let verifiedStatus = existingStatus;
+      if (!verifiedStatus.ready) {
+        const activeTerminalTask = state.getSetting<{ id?: string } | null>("terminal:active_task", null);
+        if (activeTerminalTask?.id) {
+          throw new Error(`Locked tmux terminal lane is busy with task ${activeTerminalTask.id}.`);
+        }
+        verifiedStatus = await waitForTmuxTerminalReady(config, state, { unlocked: true });
+        if (!verifiedStatus.session || !verifiedStatus.ready) {
+          throw new Error(verifiedStatus.blocker ?? "Locked tmux terminal lane exists but did not become ready.");
+        }
+      }
       const refreshed: TerminalCodexIdentity = {
         ...existingIdentity,
-        tty: existingStatus.session.tty,
-        name: existingStatus.session.name,
-        paneId: existingStatus.session.paneId,
+        tty: verifiedStatus.session?.tty ?? existingStatus.session.tty,
+        name: verifiedStatus.session?.name ?? existingStatus.session.name,
+        paneId: verifiedStatus.session?.paneId ?? existingStatus.session.paneId,
         cwdHint: directoryHint(config),
-        lastVerifiedAt: existingStatus.ready ? Date.now() : existingIdentity.lastVerifiedAt,
+        lastVerifiedAt: verifiedStatus.ready ? Date.now() : existingIdentity.lastVerifiedAt,
       };
       setTerminalCodexIdentity(state, refreshed);
       return refreshed;
@@ -583,7 +650,7 @@ export async function startTerminalCodexWorker(
   if (existingStatus.blocker && /multiple matching/i.test(existingStatus.blocker)) {
     throw new Error(existingStatus.blocker);
   }
-  const launchPlan = buildTerminalCodexLaunchPlan(config);
+  const launchPlan = buildTerminalCodexLaunchPlan(config, options);
   writeTerminalCodexLauncher(launchPlan);
   const ownerNonce = randomUUID();
   let tmuxStarted = false;
@@ -598,14 +665,12 @@ export async function startTerminalCodexWorker(
     tmuxStarted = true;
     await setTmuxCodexOwner(config.terminal_lane.session_name, ownerNonce, launchPlan.launchArgsHash);
     ownerRecorded = true;
-    const deadline = Date.now() + 30_000;
-    status = await getStatusForBackend(config, state, "tmux", { unlocked: true });
-    while (!status.session && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      status = await getStatusForBackend(config, state, "tmux", { unlocked: true });
-    }
+    status = await waitForTmuxTerminalReady(config, state, { unlocked: true });
     if (!status.session) {
       throw new Error(status.blocker ?? "tmux Codex worker started but could not be verified.");
+    }
+    if (!status.ready) {
+      throw new Error(status.blocker ?? "tmux Codex worker started but did not become ready.");
     }
   } catch (error) {
     if (tmuxStarted) {
@@ -627,6 +692,9 @@ export async function startTerminalCodexWorker(
     profile: launchPlan.profile,
     sandbox: launchPlan.sandbox,
     approvalPolicy: launchPlan.approvalPolicy,
+    model: launchPlan.model,
+    reasoningEffort: launchPlan.reasoningEffort,
+    webSearch: launchPlan.webSearch,
     launcherPath: launchPlan.launcherPath,
     launchArgsHash: launchPlan.launchArgsHash,
     ownerNonce,
@@ -927,6 +995,9 @@ export function renderTerminalCodexStatus(status: TerminalCodexStatus, identity:
       identity?.profile ? `Profile: ${identity.profile}` : null,
       identity?.sandbox ? `Sandbox: ${identity.sandbox}` : null,
       identity?.approvalPolicy ? `Approvals: ${identity.approvalPolicy}` : null,
+      identity?.model ? `Model: ${identity.model}` : null,
+      identity?.reasoningEffort ? `Reasoning: ${identity.reasoningEffort}` : null,
+      identity ? `Web search: ${identity.webSearch ? "enabled" : "disabled"}` : null,
       (identity?.backend ?? status.backend) === "tmux" ? `Attach: ${terminalAttachCommand(identity?.name || "telegram-codex-bridge-terminal")}` : null,
       `Blocker: ${status.blocker ?? "unknown"}`,
     ].filter(Boolean).join("\n");
@@ -945,6 +1016,9 @@ export function renderTerminalCodexStatus(status: TerminalCodexStatus, identity:
     identity?.profile ? `Profile: ${identity.profile}` : null,
     identity?.sandbox ? `Sandbox: ${identity.sandbox}` : null,
     identity?.approvalPolicy ? `Approvals: ${identity.approvalPolicy}` : null,
+    identity?.model ? `Model: ${identity.model}` : null,
+    identity?.reasoningEffort ? `Reasoning: ${identity.reasoningEffort}` : null,
+    identity ? `Web search: ${identity.webSearch ? "enabled" : "disabled"}` : null,
     status.backend === "tmux" ? `Attach: ${terminalAttachCommand(status.session.name)}` : null,
     `Blocker: ${status.blocker ?? "none"}`,
   ].filter(Boolean).join("\n");

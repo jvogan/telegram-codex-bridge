@@ -46,6 +46,7 @@ function createConfig(root: string): BridgeConfig {
       approval_policy: "never",
       model: "",
       reasoning_effort: "low",
+      web_search: true,
       codex_profile: "",
       daemon_owned: true,
       allow_user_owned_sessions: false,

@@ -54,6 +54,7 @@ sandbox = "read-only" # read-only | workspace-write
 approval_policy = "never" # never | on-request
 model = "gpt-5.5"
 reasoning_effort = "low" # low | medium | high | xhigh
+web_search = true
 codex_profile = ""
 # true means bridge-owned tmux only; false means use terminal lock with user-owned sessions.
 daemon_owned = true

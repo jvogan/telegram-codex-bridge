@@ -123,7 +123,7 @@ Codex should check that `tmux` exists, set `terminal_lane.enabled = true`, leave
 If you want Telegram to use the verified lane, ask for that separately:
 
 ```text
-Connect Telegram to the terminal lane for normal text work. Keep image, voice, call, web-search, and desktop-control requests on the primary bridge.
+Connect Telegram to the terminal lane for normal text and safe web-research work. Keep image, voice, call, and desktop-control requests on the primary bridge.
 ```
 
 Codex should tell you to send `/terminal chat on` after the lane is verified.

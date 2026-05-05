@@ -136,11 +136,11 @@ import { parseTelegramSlashCommand } from "../core/telegram/slash-command.js";
 import { sideEffectfulSlashCommandCategory } from "../core/telegram/side-effectful-updates.js";
 import {
   buildTerminalConversationPromptForTask,
+  buildTerminalExplicitPromptForText,
   buildTerminalPromptForTask,
-  buildTerminalPromptForText,
-  isTerminalUnsafeRequest,
   selectTerminalRouteForTask,
   terminalConversationBlocker,
+  terminalExplicitAskBlocker,
   terminalRouteCanBypassHold,
 } from "../core/telegram/terminal-routing.js";
 import {
@@ -189,6 +189,7 @@ import type {
   RealtimeCallSurfaceRecord,
   StoredArtifact,
   TerminalLaneBackend,
+  TerminalLaneProfile,
 } from "../core/types.js";
 import { ensureDir } from "../core/util/files.js";
 import { writePidFile, removePidFile, readPidFile, isProcessRunning } from "../core/util/pid.js";
@@ -5324,6 +5325,37 @@ function terminalConversationAllowsWorkspaceWrites(): boolean {
   return profile === "power-user" && sandbox === "workspace-write";
 }
 
+function terminalIdentityDetailLines(identity: ReturnType<typeof terminalCodexIdentity>): string[] {
+  return [
+    `Profile: ${identity?.profile ?? config.terminal_lane.profile}`,
+    `Sandbox: ${identity?.sandbox ?? config.terminal_lane.sandbox}`,
+    `Approvals: ${identity?.approvalPolicy ?? config.terminal_lane.approval_policy}`,
+    `Model: ${identity?.model ?? config.terminal_lane.model ?? "default"}`,
+    `Reasoning: ${identity?.reasoningEffort ?? config.terminal_lane.reasoning_effort ?? "default"}`,
+    `Web search: ${(identity?.webSearch ?? (config.terminal_lane.web_search !== false)) ? "enabled" : "disabled"}`,
+  ];
+}
+
+function terminalIdentityChatLines(identity: ReturnType<typeof terminalCodexIdentity>): string[] {
+  return [
+    `Profile: ${identity?.profile ?? config.terminal_lane.profile}`,
+    `Model: ${identity?.model ?? config.terminal_lane.model ?? "default"}`,
+    `Reasoning: ${identity?.reasoningEffort ?? config.terminal_lane.reasoning_effort ?? "default"}`,
+    `Web search: ${(identity?.webSearch ?? (config.terminal_lane.web_search !== false)) ? "on" : "off"}`,
+  ];
+}
+
+function parseTerminalProfileArg(args: string[]): TerminalLaneProfile | undefined {
+  const explicitIndex = args.indexOf("--profile");
+  const profileArg = explicitIndex >= 0
+    ? args[explicitIndex + 1]
+    : args.find(arg => arg === "public-safe" || arg === "power-user");
+  if (profileArg === "public-safe" || profileArg === "power-user") {
+    return profileArg;
+  }
+  return undefined;
+}
+
 function recoverPersistedTerminalTask(): void {
   const persisted = state.getSetting<PersistedTerminalTask | null>(TERMINAL_ACTIVE_TASK_KEY, null);
   if (!persisted) {
@@ -5644,14 +5676,16 @@ async function tryCompleteQueuedTerminalCodexTask(task: QueuedTelegramTask, plac
       });
       return true;
     }
-    if (isTerminalUnsafeRequest(prompt)) {
-      const unsafeText = "Terminal Codex lane is read-only/artifact-only for explicit terminal asks. Send mutation, install, deploy, secret, live-call, image-generation, or desktop-control work to the bound desktop bridge path instead.";
+    const blockerText = terminalExplicitAskBlocker(prompt, {
+      allowWorkspaceWrites: terminalConversationAllowsWorkspaceWrites(),
+    });
+    if (blockerText) {
       if (placeholderMessageId) {
-        await telegram.editMessageText(task.chatId, placeholderMessageId, unsafeText).catch(async () => {
-          await telegram.sendMessage(task.chatId, unsafeText);
+        await telegram.editMessageText(task.chatId, placeholderMessageId, blockerText).catch(async () => {
+          await telegram.sendMessage(task.chatId, blockerText);
         });
       } else {
-        await telegram.sendMessage(task.chatId, unsafeText);
+        await telegram.sendMessage(task.chatId, blockerText);
       }
       state.updateQueueStatus(task.id, "failed", {
         placeholderMessageId,
@@ -5672,7 +5706,9 @@ async function tryCompleteQueuedTerminalCodexTask(task: QueuedTelegramTask, plac
     setActiveTerminalTask({
       id: randomUUID(),
       chatId: task.chatId,
-      prompt: buildTerminalPromptForText(prompt),
+      prompt: buildTerminalExplicitPromptForText(prompt, {
+        allowWorkspaceWrites: terminalConversationAllowsWorkspaceWrites(),
+      }),
       placeholderMessageId: livePlaceholderMessageId,
       startedAt: Date.now(),
       askStart: null,
@@ -5790,6 +5826,9 @@ async function tryCompleteQueuedTerminalCodexTask(task: QueuedTelegramTask, plac
 
 async function handleTerminalCommand(chatId: string, args: string[]): Promise<void> {
   const action = args[0] ?? "status";
+  const profile = action === "init" || action === "start" || action === "restart"
+    ? parseTerminalProfileArg(args)
+    : undefined;
   switch (action) {
     case "status": {
       const terminalStatusText = sanitizeTelegramFinalText(renderTerminalCodexStatus(
@@ -5860,11 +5899,12 @@ async function handleTerminalCommand(chatId: string, args: string[]): Promise<vo
       setTerminalChatModeEnabled(true);
       await telegram.sendMessage(chatId, [
         "Terminal chat mode enabled.",
-        "Normal Telegram messages will route to the verified terminal Codex lane unless they require native image/audio, live calls, web search, or desktop bridge capabilities.",
+        "Normal Telegram messages will route to the verified terminal Codex lane unless they require native image/audio, live calls, desktop control, or other desktop bridge capabilities.",
         `Backend: ${identity.backend}`,
         `Session: ${identity.name}`,
         `TTY: ${identity.tty ?? "none"}`,
         `Pane: ${identity.paneId ?? "none"}`,
+        ...terminalIdentityChatLines(identity),
         `Workspace writes: ${terminalConversationAllowsWorkspaceWrites() ? "allowed by terminal profile" : "blocked by terminal profile"}`,
       ].join("\n"));
       return;
@@ -5883,16 +5923,14 @@ async function handleTerminalCommand(chatId: string, args: string[]): Promise<vo
         ].join("\n"));
         return;
       }
-      const identity = await startTerminalCodexWorker(config, state);
+      const identity = await startTerminalCodexWorker(config, state, profile ? { profile } : {});
       await telegram.sendMessage(chatId, [
         action === "init" ? "Terminal Codex tmux lane initialized." : "Terminal Codex worker started.",
         `Backend: ${identity.backend}`,
         `Session: ${identity.name}`,
         `TTY: ${identity.tty ?? "none"}`,
         `Pane: ${identity.paneId ?? "none"}`,
-        `Profile: ${identity.profile ?? config.terminal_lane.profile}`,
-        `Sandbox: ${identity.sandbox ?? config.terminal_lane.sandbox}`,
-        `Approvals: ${identity.approvalPolicy ?? config.terminal_lane.approval_policy}`,
+        ...terminalIdentityDetailLines(identity),
         `Daemon-owned: ${identity.daemonOwned ? "yes" : "no"}`,
         `Attach: ${terminalAttachCommand(identity.name)}`,
       ].join("\n"));
@@ -5921,16 +5959,14 @@ async function handleTerminalCommand(chatId: string, args: string[]): Promise<vo
         return;
       }
       await stopTerminalCodexWorker(config, state);
-      const identity = await startTerminalCodexWorker(config, state);
+      const identity = await startTerminalCodexWorker(config, state, profile ? { profile } : {});
       await telegram.sendMessage(chatId, [
         "Terminal Codex worker restarted.",
         `Backend: ${identity.backend}`,
         `Session: ${identity.name}`,
         `TTY: ${identity.tty ?? "none"}`,
         `Pane: ${identity.paneId ?? "none"}`,
-        `Profile: ${identity.profile ?? config.terminal_lane.profile}`,
-        `Sandbox: ${identity.sandbox ?? config.terminal_lane.sandbox}`,
-        `Approvals: ${identity.approvalPolicy ?? config.terminal_lane.approval_policy}`,
+        ...terminalIdentityDetailLines(identity),
         `Attach: ${terminalAttachCommand(identity.name)}`,
       ].join("\n"));
       return;
@@ -5943,6 +5979,7 @@ async function handleTerminalCommand(chatId: string, args: string[]): Promise<vo
         `Session: ${identity.name}`,
         `TTY: ${identity.tty ?? "none"}`,
         `Pane: ${identity.paneId ?? "none"}`,
+        ...terminalIdentityChatLines(identity),
         `Daemon-owned: ${identity.daemonOwned ? "yes" : "no"}`,
       ].join("\n"));
       return;
@@ -6003,11 +6040,16 @@ async function handleTerminalCommand(chatId: string, args: string[]): Promise<vo
         await telegram.sendMessage(chatId, `Terminal Codex ask is blocked right now: ${blocker}.`);
         return;
       }
-      if (isTerminalUnsafeRequest(prompt)) {
-        await telegram.sendMessage(chatId, "Terminal Codex lane is read-only/artifact-only right now. Send mutation, install, deploy, secret, live-call, image-generation, or desktop-control work to the bound desktop bridge path instead.");
+      const blockerText = terminalExplicitAskBlocker(prompt, {
+        allowWorkspaceWrites: terminalConversationAllowsWorkspaceWrites(),
+      });
+      if (blockerText) {
+        await telegram.sendMessage(chatId, blockerText);
         return;
       }
-      await startTerminalAskFromTelegram(chatId, buildTerminalPromptForText(prompt));
+      await startTerminalAskFromTelegram(chatId, buildTerminalExplicitPromptForText(prompt, {
+        allowWorkspaceWrites: terminalConversationAllowsWorkspaceWrites(),
+      }));
       return;
     }
     case "interrupt": {
@@ -6075,11 +6117,12 @@ async function handleTelegramTerminalIntent(message: TelegramMessage, intent: Te
       setTerminalChatModeEnabled(true);
       await telegram.sendMessage(chatId, [
         "Terminal chat mode enabled.",
-        "Normal Telegram messages will route to the verified terminal Codex lane unless they require native image/audio, live calls, web search, or desktop bridge capabilities.",
+        "Normal Telegram messages will route to the verified terminal Codex lane unless they require native image/audio, live calls, desktop control, or other desktop bridge capabilities.",
         `Backend: ${identity.backend}`,
         `Session: ${identity.name}`,
         `TTY: ${identity.tty ?? "none"}`,
         `Pane: ${identity.paneId ?? "none"}`,
+        ...terminalIdentityChatLines(identity),
         `Workspace writes: ${terminalConversationAllowsWorkspaceWrites() ? "allowed by terminal profile" : "blocked by terminal profile"}`,
       ].join("\n"), { replyToMessageId: message.message_id });
       return true;

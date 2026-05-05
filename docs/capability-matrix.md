@@ -47,7 +47,7 @@ These are opt-in and should be described conservatively.
 
 - no hosted SaaS backend
 - no native Telegram voice call
-- no silent Telegram-to-terminal chat route; `/terminal chat on` is explicit and still routes native media/web/call/desktop requests to the primary bridge
+- no silent Telegram-to-terminal chat route; `/terminal chat on` is explicit and still routes native media/call/desktop requests to the primary bridge
 - no automatic iTerm2, Terminal.app, or existing tmux adoption
 - no safe parallel worker for arbitrary repo/file edits on the same bound thread; the fallback lane is for safe non-mutating work only
 - no `danger-full-access` terminal lane guidance

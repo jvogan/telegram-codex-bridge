@@ -72,7 +72,7 @@ Mode wording should stay consistent everywhere:
 - `shared-thread-resume`: Telegram continues the currently bound desktop Codex thread and inherits repo/file/tool/web abilities from that session
 - `autonomous-thread`: the bridge owns its own persistent Codex thread
 - `shadow-window`: experimental, macOS-only, and non-core
-- `terminal_lane`: experimental, disabled by default, explicit via `/terminal`, gated before workspace-write or user-owned sessions, and primary-bridge fallback for native media/web/call/desktop requests
+- `terminal_lane`: experimental, disabled by default, explicit via `/terminal`, gated before workspace-write or user-owned sessions, and primary-bridge fallback for native media/call/desktop requests
 
 ## Live `/call` Flow
 
